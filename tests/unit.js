@@ -1,0 +1,316 @@
+// Tests unitaires de la logique (exécutés dans le navigateur par tests/test_unit.py).
+import { fold, shuffle, setRandom, seeded, escapeHtml, levenshtein } from "../js/util.js";
+import { cleanTitle, cleanWork, tracksFromResults, buildPlaylist, searchItunes, MusicError } from "../js/music.js";
+import { Game, makeChoices, isTypedCorrect, scoreFor, answerOf } from "../js/game.js";
+import { CATEGORIES, categoryById } from "../js/categories.js";
+import { submitRecord, getRecord } from "../js/storage.js";
+
+const results = [];
+function test(name, fn) { results.push({ name, fn }); }
+function eq(a, b, msg = "") {
+  const A = JSON.stringify(a), B = JSON.stringify(b);
+  if (A !== B) throw new Error(`${msg} attendu ${B}, obtenu ${A}`);
+}
+function ok(v, msg = "condition fausse") { if (!v) throw new Error(msg); }
+
+const pop = categoryById("pop");
+const raw = (o) => ({
+  kind: "song", trackId: Math.floor(Math.random() * 1e9), previewUrl: "https://x/p.m4a", artworkUrl100: "https://a/100x100bb.jpg",
+  trackViewUrl: "https://m", releaseDate: "2015-01-01T00:00:00Z", collectionName: "Album", ...o,
+});
+
+// ───── util
+test("fold enlève accents, majuscules, ponctuation", () => {
+  eq(fold("Édith Piaf"), "edith piaf");
+  eq(fold("AC/DC"), "ac dc");
+  eq(fold("Guns N' Roses"), "guns n roses");
+  eq(fold("Måneskin"), "maneskin");
+  eq(fold("Earth, Wind & Fire"), "earth wind and fire");
+  eq(fold("Motörhead"), "motorhead");
+});
+test("shuffle conserve les éléments", () => {
+  setRandom(seeded(1));
+  const s = shuffle([1, 2, 3, 4, 5]);
+  eq([...s].sort(), [1, 2, 3, 4, 5]);
+  setRandom(null);
+});
+test("escapeHtml", () => eq(escapeHtml(`<b a="x">'&`), "&lt;b a=&quot;x&quot;&gt;&#39;&amp;"));
+test("levenshtein", () => { eq(levenshtein("chat", "chats"), 1); eq(levenshtein("", "abc"), 3); eq(levenshtein("kitten", "sitting"), 3); });
+
+// ───── nettoyage
+test("cleanTitle retire remaster/feat/live mais garde les vraies parenthèses", () => {
+  eq(cleanTitle("Bohemian Rhapsody (Remastered 2011)"), "Bohemian Rhapsody");
+  eq(cleanTitle("Get Lucky (feat. Pharrell Williams & Nile Rodgers)"), "Get Lucky");
+  eq(cleanTitle("Wonderwall - Remastered"), "Wonderwall");
+  eq(cleanTitle("(I Can't Get No) Satisfaction"), "(I Can't Get No) Satisfaction");
+  eq(cleanTitle("Libérée, délivrée - De \"La Reine des neiges\""), "Libérée, délivrée");
+  eq(cleanTitle("Stayin' Alive [From \"Saturday Night Fever\"]"), "Stayin' Alive");
+  eq(cleanTitle("Alors on danse - Radio Edit"), "Alors on danse");
+  eq(cleanTitle("La Belle et la Bête (Duo) [De \"La Belle et la Bête\"]"), "La Belle et la Bête");
+  eq(cleanTitle("Notre dame de Paris (Symphonique, orch. Samuel Pegg)"), "Notre dame de Paris");
+});
+test("cleanWork tire le nom du film de l'album", () => {
+  eq(cleanWork("Interstellar (Original Motion Picture Soundtrack)"), "Interstellar");
+  eq(cleanWork("Gladiator: Music from the Motion Picture"), "Gladiator");
+  eq(cleanWork("Le fabuleux destin d'Amélie Poulain (Bande originale du film)"), "Le fabuleux destin d'Amélie Poulain");
+  eq(cleanWork("Pirates of the Caribbean: The Curse of the Black Pearl (Original Soundtrack)"), "Pirates of the Caribbean: The Curse of the Black Pearl");
+});
+
+// ───── filtrage des résultats
+test("tracksFromResults : bon artiste, pas de karaoké/live/remix, pas de doublon", () => {
+  const src = { type: "artist", name: "Adele", cat: pop };
+  const out = tracksFromResults([
+    raw({ trackName: "Hello", artistName: "Adele" }),
+    raw({ trackName: "Hello (Live at the BBC)", artistName: "Adele" }),
+    raw({ trackName: "Hello", artistName: "Adele", collectionName: "Hello - Single" }),
+    raw({ trackName: "Someone Like You (Karaoke Version)", artistName: "Karaoke Stars" }),
+    raw({ trackName: "Rolling in the Deep (Remix)", artistName: "Adele" }),
+    raw({ trackName: "Skyfall", artistName: "Adele" }),
+    raw({ trackName: "Easy On Me", artistName: "Tribute Band" }),
+    raw({ trackName: "Set Fire", artistName: "Adele", previewUrl: undefined }),
+  ], src);
+  eq(out.map((t) => t.title), ["Hello", "Skyfall"]);
+  eq(out[0].artist, "Adele");
+  ok(out[0].art.includes("600x600bb"), "pochette en grand");
+});
+test("tracksFromResults : filtre d'années (époques récentes)", () => {
+  const cat = categoryById("2020s");
+  const out = tracksFromResults([
+    raw({ trackName: "Levitating", artistName: "Dua Lipa", releaseDate: "2020-03-27T07:00:00Z" }),
+    raw({ trackName: "New Rules", artistName: "Dua Lipa", releaseDate: "2017-06-02T07:00:00Z" }),
+  ], { type: "artist", name: "Dua Lipa", cat });
+  eq(out.map((t) => t.title), ["Levitating"]);
+});
+test("tracksFromResults : musiques de films (bande originale uniquement, pas de compilation)", () => {
+  const cat = categoryById("films");
+  const out = tracksFromResults([
+    raw({ trackName: "Time", artistName: "Hans Zimmer", collectionName: "Inception (Music from the Motion Picture)" }),
+    raw({ trackName: "Cornfield Chase", artistName: "Hans Zimmer", collectionName: "Interstellar (Original Motion Picture Soundtrack)" }),
+    raw({ trackName: "Now We Are Free", artistName: "Hans Zimmer", collectionName: "The Essential Hans Zimmer" }),
+    raw({ trackName: "Live Concert", artistName: "Hans Zimmer", collectionName: "Live in Prague" }),
+  ], { type: "score", name: "Hans Zimmer", cat });
+  eq(out.map((t) => t.work), ["Inception", "Interstellar"]);
+});
+test("tracksFromResults : œuvres (Disney) filtrées sur l'album", () => {
+  const cat = categoryById("disney");
+  const out = tracksFromResults([
+    raw({ trackName: "Libérée, délivrée", artistName: "Anaïs Delva", collectionName: "La Reine des neiges (Bande Originale Française du Film)" }),
+    raw({ trackName: "Autre chanson", artistName: "X", collectionName: "Compilation été" }),
+  ], { type: "work", name: "La Reine des neiges", cat });
+  eq(out.length, 1);
+  eq(out[0].work, "La Reine des neiges");
+});
+
+test("tracksFromResults : mots entiers (Bach ≠ Ofenbach), pas d'interlude", () => {
+  const cl = categoryById("classique");
+  const out = tracksFromResults([
+    raw({ trackName: "Be Mine", artistName: "Ofenbach" }),
+    raw({ trackName: "Air", artistName: "Johann Sebastian Bach" }),
+    raw({ trackName: "Prelude No. 1", artistName: "Johann Sebastian Bach & Glenn Gould" }),
+  ], { type: "artist", name: "Bach", cat: cl });
+  eq(out.map((t) => t.title), ["Air", "Prelude No. 1"], "le classique garde ses préludes");
+  const rap = tracksFromResults([
+    raw({ trackName: "Interlude", artistName: "IAM" }),
+    raw({ trackName: "Xxplosive (Instrumental)", artistName: "IAM" }),
+    raw({ trackName: "Intro", artistName: "IAM" }),
+    raw({ trackName: "Je danse le mia", artistName: "IAM" }),
+  ], { type: "artist", name: "IAM", cat: categoryById("rapfr") });
+  eq(rap.map((t) => t.title), ["Je danse le mia"]);
+});
+
+// ───── propositions & réponses tapées
+test("makeChoices : 4 propositions uniques dont la bonne", () => {
+  const pool = ["A", "B", "C", "D", "E", "F"].map((x, i) => ({ title: `Titre ${x}`, artist: pop.artists[i], work: "" }));
+  for (let k = 0; k < 30; k++) {
+    for (const kind of ["title", "artist"]) {
+      const c = makeChoices(pool[0], kind, pool, pop);
+      eq(c.length, 4, kind);
+      eq(new Set(c.map(fold)).size, 4, "uniques");
+      ok(c.includes(answerOf(pool[0], kind)), "contient la bonne réponse");
+    }
+  }
+});
+test("makeChoices : complète avec la liste d'artistes même si le pool est petit", () => {
+  const pool = [{ title: "Hello", artist: "Adele" }];
+  const c = makeChoices(pool[0], "artist", pool, pop);
+  eq(c.length, 4);
+});
+test("makeChoices : œuvres complétées par la liste de secours (films)", () => {
+  const films = categoryById("films");
+  const t = { title: "Time", artist: "Hans Zimmer", work: "Inception" };
+  const c = makeChoices(t, "work", [t], films);
+  eq(c.length, 4);
+  ok(c.includes("Inception"));
+});
+test("isTypedCorrect tolère accents, casse, articles, fautes", () => {
+  ok(isTypedCorrect("edith piaf", ["Édith Piaf"]));
+  ok(isTypedCorrect("beatles", ["The Beatles"]));
+  ok(isTypedCorrect("Bohemian rapsody", ["Bohemian Rhapsody"]));
+  ok(isTypedCorrect("daft punk", ["Daft Punk & Julian Casablancas"]));
+  ok(isTypedCorrect("satisfaction", ["(I Can't Get No) Satisfaction"]));
+  ok(isTypedCorrect("reine des neiges", ["La Reine des neiges"]));
+  ok(!isTypedCorrect("abba", ["Queen"]));
+  ok(!isTypedCorrect("a", ["Adele"]));
+  ok(!isTypedCorrect("", ["Adele"]));
+  ok(!isTypedCorrect("hey", ["Hello"]));
+  ok(!isTypedCorrect("U3", ["U2"]));
+});
+test("scoreFor : base + rapidité + série", () => {
+  eq(scoreFor({ correct: false, elapsed: 1, limit: 20, streak: 0 }), 0);
+  eq(scoreFor({ correct: true, elapsed: 0, limit: 20, streak: 1 }), 200);
+  eq(scoreFor({ correct: true, elapsed: 10, limit: 20, streak: 1 }), 150);
+  eq(scoreFor({ correct: true, elapsed: 25, limit: 20, streak: 1 }), 100);
+  eq(scoreFor({ correct: true, elapsed: 20, limit: 20, streak: 3 }), 150);
+});
+
+// ───── déroulement d'une partie
+function fakeTracks(n) {
+  return Array.from({ length: n }, (_, i) => ({ id: i, title: `Chanson ${i}`, artist: pop.artists[i % pop.artists.length], fullArtist: pop.artists[i % pop.artists.length], work: "", preview: `p${i}` }));
+}
+test("Game solo : points, série, fin", () => {
+  const g = new Game({ cat: pop, tracks: fakeTracks(4), duration: 20 });
+  const good = () => answerOf(g.current.track, g.current.kind);
+  eq(g.answer(good(), 0).points, 200); g.next();
+  eq(g.answer(good(), 10).points, 150); g.next();
+  eq(g.answer(good(), 20).points, 150, "3e d'affilée : bonus 50"); g.next();
+  eq(g.answer("Mauvaise", 1).points, 0);
+  eq(g.players[0].score, 500);
+  eq(g.players[0].bestStreak, 3);
+  eq(g.players[0].good, 3);
+  ok(g.isLast);
+  eq(g.next(), false);
+  ok(g.finished);
+});
+test("Game : répondre deux fois ne compte qu'une fois", () => {
+  const g = new Game({ cat: pop, tracks: fakeTracks(2) });
+  const a = answerOf(g.current.track, g.current.kind);
+  g.answer(a, 0); g.answer(a, 0);
+  eq(g.players[0].score, 200);
+});
+test("Game chacun son tour : joueurs en alternance", () => {
+  const g = new Game({ cat: pop, mode: "turns", players: [{ name: "Léa" }, { name: "Tom" }, { name: "Zoé" }], tracks: fakeTracks(6) });
+  const names = [];
+  do { names.push(g.currentPlayer.name); g.answer(answerOf(g.current.track, g.current.kind), 0); } while (g.next());
+  eq(names, ["Léa", "Tom", "Zoé", "Léa", "Tom", "Zoé"]);
+  eq(g.players.map((p) => p.score), [400, 400, 400]);
+});
+test("Game soirée : l'animateur attribue les points", () => {
+  const g = new Game({ cat: pop, mode: "party", players: [{ name: "A" }, { name: "B" }], tracks: fakeTracks(3) });
+  eq(g.answerMode, "none");
+  eq(g.current.choices, null);
+  g.award([0, 1]); g.next();
+  g.award([1]); g.next();
+  g.award([]);
+  eq(g.players.map((p) => p.score), [1, 2]);
+  eq(g.ranking()[0].name, "B");
+});
+test("Game : réponse tapée avec faute acceptée", () => {
+  const g = new Game({ cat: categoryById("classique"), answerMode: "typing", tracks: [{ id: 1, title: "Symphonie n°5", artist: "Beethoven", fullArtist: "Ludwig van Beethoven", work: "" }] });
+  eq(g.current.kind, "artist");
+  ok(g.answer("betoven", 2).correct);
+});
+test("Game : extrait illisible = manche annulée sans casser la série", () => {
+  const g = new Game({ cat: pop, tracks: fakeTracks(3) });
+  g.answer(answerOf(g.current.track, g.current.kind), 0); g.next();
+  g.skip(); g.next();
+  eq(g.players[0].streak, 1);
+  eq(g.rounds[1].result.skipped, true);
+});
+
+// ───── construction de la playlist (API simulée)
+function fakeFetch(handler) {
+  const calls = [];
+  const fn = async (url) => {
+    calls.push(url);
+    const u = new URL(url);
+    const r = handler(u);
+    if (r instanceof Error) throw r;
+    if (typeof r === "number") return { ok: false, status: r, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ results: r }) };
+  };
+  fn.calls = calls;
+  return fn;
+}
+const songsFor = (term, n = 12) => Array.from({ length: n }, (_, i) => raw({ trackId: fold(term).length * 1000 + i + Math.floor(Math.random() * 1e6) * 100, trackName: `${term} hit ${i}`, artistName: term }));
+
+test("buildPlaylist : bon nombre, plusieurs artistes, quelques requêtes seulement", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const f = fakeFetch((u) => songsFor(u.searchParams.get("term")));
+  const { tracks, extra } = await buildPlaylist(pop, 10, { fetchFn: f });
+  eq(tracks.length, 10);
+  ok(new Set(tracks.map((t) => t.artist)).size >= 3, "variété d'artistes");
+  ok(f.calls.length <= 10, `requêtes : ${f.calls.length}`);
+  ok(extra.length > 0, "réserve pour les mauvaises réponses");
+  ok(f.calls.every((c) => c.includes("country=FR")), "catalogue français");
+});
+test("buildPlaylist : 20 morceaux sans doublon", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const f = fakeFetch((u) => songsFor(u.searchParams.get("term")));
+  const { tracks } = await buildPlaylist(categoryById("rock"), 20, { fetchFn: f });
+  eq(tracks.length, 20);
+  eq(new Set(tracks.map((t) => t.id)).size, 20);
+});
+test("buildPlaylist : Mix surprise pioche dans plusieurs catégories", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const f = fakeFetch((u) => songsFor(u.searchParams.get("term")));
+  const { tracks } = await buildPlaylist(categoryById("mix"), 10, { fetchFn: f });
+  eq(tracks.length, 10);
+  ok(new Set(tracks.map((t) => t.catId)).size >= 4, "plusieurs catégories");
+});
+test("buildPlaylist : sources pauvres → vagues supplémentaires", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const f = fakeFetch((u) => songsFor(u.searchParams.get("term"), 1));
+  const { tracks } = await buildPlaylist(pop, 10, { fetchFn: f });
+  eq(tracks.length, 10);
+  ok(f.calls.length >= 10);
+});
+test("buildPlaylist : erreurs claires (saturé, réseau, vide)", async () => {
+  for (const [resp, code] of [[403, "busy"], [new TypeError("Failed to fetch"), "network"], [[], "empty"]]) {
+    localStorage.removeItem("bt-cache-v1");
+    let err = null;
+    try { await buildPlaylist(pop, 10, { fetchFn: fakeFetch(() => resp) }); } catch (e) { err = e; }
+    ok(err instanceof MusicError, `erreur MusicError pour ${code}`);
+    eq(err.code, code);
+  }
+});
+test("searchItunes : la 2e demande identique vient du cache", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const f = fakeFetch(() => [raw({ trackName: "X", artistName: "Y" })]);
+  await searchItunes({ term: "Y" }, { fetchFn: f });
+  await searchItunes({ term: "Y" }, { fetchFn: f });
+  eq(f.calls.length, 1);
+});
+test("toutes les catégories sont valides", () => {
+  const ids = new Set();
+  for (const c of CATEGORIES) {
+    ok(!ids.has(c.id), `id unique ${c.id}`); ids.add(c.id);
+    ok(c.name && c.emoji && c.colors.length === 2, c.id);
+    if (!c.mix) {
+      const list = c.kind === "work" ? c.works : c.artists;
+      ok(list && list.length >= 12, `${c.id} : au moins 12 sources (${list && list.length})`);
+    }
+  }
+  ok(CATEGORIES.length >= 20);
+});
+
+// ───── records
+test("records : seul un meilleur score remplace l'ancien", () => {
+  localStorage.removeItem("bt-records-v1");
+  ok(submitRecord("pop", 10, 800));
+  ok(!submitRecord("pop", 10, 700));
+  ok(submitRecord("pop", 10, 900));
+  eq(getRecord("pop", 10).score, 900);
+  eq(getRecord("pop", 15), null);
+  ok(!submitRecord("pop", 10, 0));
+  localStorage.removeItem("bt-records-v1");
+});
+
+// ───── exécution
+(async () => {
+  const out = [];
+  for (const t of results) {
+    try { await t.fn(); out.push({ name: t.name, ok: true }); }
+    catch (e) { out.push({ name: t.name, ok: false, error: String(e && e.message || e) }); }
+  }
+  window.__results = out;
+})();
