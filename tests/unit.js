@@ -242,6 +242,7 @@ test("buildPlaylist : bon nombre, plusieurs artistes, quelques requêtes seuleme
   ok(f.calls.length <= 10, `requêtes : ${f.calls.length}`);
   ok(extra.length > 0, "réserve pour les mauvaises réponses");
   ok(f.calls.every((c) => c.includes("country=FR")), "catalogue français");
+  ok(f.calls.every((c) => !c.includes("media=")), "pas de media=music (redirection sur iPhone)");
 });
 test("buildPlaylist : 20 morceaux sans doublon", async () => {
   localStorage.removeItem("bt-cache-v1");

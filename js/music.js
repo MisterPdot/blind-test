@@ -3,6 +3,8 @@ import { CATEGORIES } from "./categories.js";
 import { fold, shuffle } from "./util.js";
 
 const API = "https://itunes.apple.com/search";
+// NB : ne jamais ajouter « media=music » : sur iPhone, Apple redirige alors vers l’app Musique (musics://)
+// au lieu de répondre, et la recherche échoue.
 const CACHE_KEY = "bt-cache-v1";
 const CACHE_TTL = 3 * 24 * 3600 * 1000; // 3 jours
 const CACHE_MAX = 120; // requêtes gardées
@@ -76,7 +78,7 @@ function slim(r) {
 }
 
 export async function searchItunes(params, { fetchFn = fetch, timeout = 10000 } = {}) {
-  const qs = new URLSearchParams({ media: "music", entity: "song", country: "FR", lang: "fr_fr", ...params });
+  const qs = new URLSearchParams({ entity: "song", country: "FR", lang: "fr_fr", ...params });
   const url = `${API}?${qs}`;
   const cache = loadCache();
   const hit = cache[url];

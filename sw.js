@@ -1,5 +1,5 @@
 // Garde l'application en cache pour un démarrage instantané (les extraits, eux, viennent d'Internet).
-const VERSION = "bt-v1";
+const VERSION = "bt-v2";
 const SHELL = [
   "./", "index.html", "css/style.css", "manifest.webmanifest",
   "js/app.js", "js/audio.js", "js/categories.js", "js/game.js", "js/music.js", "js/storage.js", "js/util.js",

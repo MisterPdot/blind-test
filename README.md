@@ -52,4 +52,5 @@ Ensuite, dans **Safari**, touchez **Partager ⬆︎**, puis **« Sur l'écran d'
   - `js/storage.js` : les réglages et les records.
 - **Tests** : `.venv\Scripts\python -m pytest tests`. Ils comprennent 30 tests de logique et 12 parties complètes jouées
   automatiquement dans un iPhone simulé, avec des extraits factices.
+- **Vérification réelle avec l'identité d'un iPhone** : `python tests/live_iphone.py https://misterpdot.github.io/blind-test/`.
 - **Vérification réelle du catalogue Apple** : `python tests/live_check.py`. Elle prend environ 15 minutes à cause de la limite d'Apple.
