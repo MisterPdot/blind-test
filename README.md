@@ -17,6 +17,8 @@ avec son icône, comme une app de l'App Store, sans Mac, sans App Store et gratu
 - **Entre amis, sur un seul téléphone** :
   - *Chacun son tour* : on se passe le téléphone (2 à 6 joueurs).
   - *Soirée* : un animateur tient le téléphone, tout le monde écoute, et le premier qui crie la bonne réponse marque le point.
+- **Mode difficile** : l'extrait s'arrête après 5 secondes, mais le chrono continue. Les points sont multipliés par 1,5, et les records
+  sont comptés à part.
 - **Réponses** : 4 propositions, ou réponse tapée. La réponse tapée tolère les fautes, les accents oubliés et les « The / Le / La ».
 - **Récapitulatif** en fin de partie : on peut réécouter chaque extrait ou l'ouvrir dans Apple Music.
 
@@ -58,7 +60,7 @@ Ensuite, dans **Safari**, touchez **Partager ⬆︎**, puis **« Sur l'écran d'
   - `js/app.js` : l'interface.
   - `js/audio.js` : le son, avec le déblocage audio d'iOS.
   - `js/storage.js` : les réglages et les records.
-- **Tests** : `.venv\Scripts\python -m pytest tests`. Ils comprennent 30 tests de logique et 12 parties complètes jouées
+- **Tests** : `.venv\Scripts\python -m pytest tests`. Ils comprennent les tests de logique et 14 parties complètes jouées
   automatiquement dans un iPhone simulé, avec des extraits factices.
 - **Vérification réelle avec l'identité d'un iPhone** : `python tests/live_iphone.py https://misterpdot.github.io/blind-test/`.
 - **Vérification réelle du catalogue Apple** : `python tests/live_check.py`. Elle prend environ 15 minutes à cause de la limite d'Apple.

@@ -2,6 +2,10 @@
 import { fold, shuffle, levenshtein, random } from "./util.js";
 import { promptFor } from "./categories.js";
 
+/** Mode difficile : l'extrait s'arrête après ce nombre de secondes, et les points sont multipliés. */
+export const HARD_CLIP = 5;
+export const HARD_BONUS = 1.5;
+
 export const PLAYER_COLORS = ["#ff4f8b", "#4fc3ff", "#ffd23f", "#7cff6b", "#b388ff", "#ff9f43"];
 
 export function answerOf(track, kind) {
@@ -68,11 +72,13 @@ export function acceptedAnswers(track, kind) {
   return [track.work];
 }
 
-/** Points : 100 pour une bonne réponse + jusqu'à 100 de bonus de rapidité + 50 dès 3 bonnes réponses de suite. */
-export function scoreFor({ correct, elapsed, limit, streak }) {
+/** Points : 100 pour une bonne réponse + jusqu'à 100 de bonus de rapidité + 50 dès 3 bonnes réponses de suite ;
+ *  ×1,5 en mode difficile. */
+export function scoreFor({ correct, elapsed, limit, streak, level = "normal" }) {
   if (!correct) return 0;
   const speed = Math.max(0, Math.min(1, 1 - elapsed / limit));
-  return 100 + Math.round(100 * speed) + (streak >= 3 ? 50 : 0);
+  const pts = 100 + Math.round(100 * speed) + (streak >= 3 ? 50 : 0);
+  return level === "hard" ? Math.round(pts * HARD_BONUS) : pts;
 }
 
 export class Game {
@@ -80,8 +86,9 @@ export class Game {
    * mode : "solo" | "turns" (chacun son tour, on se passe le téléphone) | "party" (un animateur attribue les points)
    * answerMode : "choices" | "typing"
    */
-  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", tracks, extra = [] }) {
+  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", level = "normal", tracks, extra = [] }) {
     this.cat = cat;
+    this.level = level === "hard" ? "hard" : "normal";
     this.mode = mode;
     this.duration = duration;
     this.answerMode = mode === "party" ? "none" : answerMode;
@@ -120,7 +127,7 @@ export class Game {
     }
     p.streak = correct ? p.streak + 1 : 0;
     p.bestStreak = Math.max(p.bestStreak, p.streak);
-    const points = scoreFor({ correct, elapsed, limit: this.duration, streak: p.streak });
+    const points = scoreFor({ correct, elapsed, limit: this.duration, streak: p.streak, level: this.level });
     p.score += points;
     if (correct) p.good++;
     r.result = { value, correct, points, elapsed, streak: p.streak };

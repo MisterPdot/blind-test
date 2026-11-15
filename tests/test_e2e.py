@@ -19,7 +19,7 @@ WORDS = ["Lumière", "Minuit", "Danse", "Océan", "Étoile", "Rêve", "Feu", "Pa
          "Cœur", "Nuit blanche", "Horizon", "Vertige", "Saturne"]
 
 
-def _wav(seconds=4.0, rate=8000):
+def _wav(seconds=8.0, rate=8000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
@@ -216,6 +216,38 @@ def test_partie_solo_complete(browser, base_url):
     page.wait_for_selector(".tile")
     assert str(total) in page.inner_text(".tile[data-cat='pop'] .tile-rec")
     assert len(page.api_calls) <= 10, f"{len(page.api_calls)} requêtes pour une partie"
+    _no_problems(page)
+    ctx.close()
+
+
+def test_mode_difficile_extrait_coupe(browser, base_url):
+    ctx, page = _new_page(browser, base_url)
+    _open(page, "rock")
+    _set(page, "level", "hard")
+    _set(page, "duration", "20")
+    assert "5 secondes" in page.inner_text("#sheet-root")
+    page.click("#play")
+    page.wait_for_selector("#go")
+    assert "Difficile" in page.inner_text(".hard-badge")
+    page.click("#go")
+    page.wait_for_selector(".choice")
+    assert _audio_playing(page)
+    # après 5 s d'écoute, le son s'arrête mais le chrono continue
+    page.wait_for_selector(".clip-over", timeout=9000)
+    page.screenshot(path=str(SHOTS / "16-difficile.png"))
+    assert page.evaluate("import('/js/audio.js').then(m => m.getPlayer().paused)")
+    left = int(page.inner_text("#time"))
+    assert 8 <= left <= 15, left
+    page.wait_for_timeout(1200)
+    assert int(page.inner_text("#time")) < left
+    good = _correct(page)
+    page.locator(".choice", has_text=good).first.click()
+    page.wait_for_selector(".verdict.ok")
+    pts = int(re.search(r"\+(\d+)", page.inner_text(".verdict")).group(1))
+    assert 150 <= pts <= 375, pts  # points ×1,5
+    page.wait_for_timeout(400)
+    assert _audio_playing(page), "la suite de l'extrait est jouée après la réponse"
+    assert page.locator(".clip-over").count() == 0
     _no_problems(page)
     ctx.close()
 

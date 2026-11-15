@@ -1,7 +1,7 @@
 // Interface du blind test : écrans d'accueil, réglages, manches, révélation, résultats.
 import { GROUPS, CATEGORIES, categoryById } from "./categories.js";
 import { buildPlaylist } from "./music.js";
-import { Game } from "./game.js";
+import { Game, HARD_CLIP } from "./game.js";
 import { escapeHtml as e } from "./util.js";
 import * as audio from "./audio.js";
 import { loadSettings, saveSettings, getRecord, submitRecord } from "./storage.js";
@@ -52,7 +52,7 @@ function renderHome() {
   try { installHint = isIos() && !isStandalone() && !localStorage.getItem("bt-hint-closed"); } catch { /* */ }
 
   const tiles = CATEGORIES.filter((c) => c.group === tab).map((c) => {
-    const rec = settings.audience === "solo" ? getRecord(c.id, settings.rounds) : null;
+    const rec = settings.audience === "solo" ? getRecord(c.id, settings.rounds, settings.level) : null;
     return `<button class="tile" data-cat="${c.id}" style="--g:${grad(c)}">
         <span class="tile-emoji">${c.emoji}</span>
         <span class="tile-name">${e(c.name)}</span>
@@ -105,10 +105,15 @@ function sheetBody(cat) {
   const friends = settings.audience === "friends";
   const times = [[10, "10 s"], [20, "20 s"], [30, "30 s"]];
   const answers = [["choices", "4 propositions"], ["typing", "Je tape"]];
+  const level = field("Difficulté", seg("level", settings.level, [["normal", "Normal"], ["hard", "Difficile 🔥"]]),
+    settings.level === "hard"
+      ? `L'extrait s'arrête après ${HARD_CLIP} secondes, mais le chrono continue.${settings.audience === "friends" && settings.friendsMode === "party" ? "" : " Points ×1,5."}`
+      : "On entend l'extrait pendant tout le temps de réponse.");
   if (!friends) {
-    const rec = getRecord(cat.id, settings.rounds);
+    const rec = getRecord(cat.id, settings.rounds, settings.level);
     return field("Nombre de morceaux", seg("rounds", settings.rounds, [[10, "10"], [15, "15"], [20, "20"]]))
       + field("Temps pour répondre", seg("duration", settings.duration, times))
+      + level
       + field("Réponses", seg("answerMode", settings.answerMode, answers),
         settings.answerMode === "typing" ? "Les fautes de frappe et les accents oubliés sont tolérés." : "")
       + `<p class="record">${rec ? `🏆 Record : <b>${rec.score} pts</b>` : "Pas encore de record : à vous de jouer !"}</p>`;
@@ -130,6 +135,7 @@ function sheetBody(cat) {
       ? field("Nombre de morceaux", seg("rounds", settings.rounds, [[10, "10"], [15, "15"], [20, "20"]]))
       : field("Morceaux par joueur", seg("perPlayer", settings.perPlayer, [[3, "3"], [5, "5"], [8, "8"]])))
     + field("Temps pour répondre", seg("duration", settings.duration, times))
+    + level
     + (party ? "" : field("Réponses", seg("answerMode", settings.answerMode, answers)));
 }
 
@@ -226,7 +232,7 @@ async function startGame(cat) {
       tracks = tracks.slice(0, fair);
     }
     if (tracks.length < count) toast(`Seulement ${tracks.length} extraits trouvés pour ce thème.`);
-    game = new Game({ cat, mode, players, duration: settings.duration, answerMode: settings.answerMode, tracks, extra });
+    game = new Game({ cat, mode, players, duration: settings.duration, answerMode: settings.answerMode, level: settings.level, tracks, extra });
     showIntro();
   } catch (err) {
     if (token !== loadToken) return;
@@ -301,6 +307,7 @@ function showIntro() {
     : `<div class="huge">${game.cat.emoji}</div>
        <h2>${e(game.cat.name)}</h2>
        <p class="muted">${game.rounds.length} morceaux · ${game.duration} s pour répondre</p>
+       ${game.level === "hard" ? `<p class="hard-badge">🔥 Difficile : extraits de ${HARD_CLIP} s</p>` : ""}
        ${game.mode === "party"
          ? `<div class="chips">${game.players.map((q) => `<span class="chip"><span class="dot" style="--c:${q.color}"></span>${e(q.name)}</span>`).join("")}</div>
             <p class="muted small">Tout le monde écoute. Le premier qui crie la bonne réponse gagne le point !</p>`
@@ -331,7 +338,7 @@ function answersHtml(r) {
 function beginRound() {
   const r = game.current;
   stopRound();
-  round = { started: false, start: 0, raf: 0, done: false, blocked: false, fallback: 0 };
+  round = { started: false, start: 0, raf: 0, done: false, blocked: false, fallback: 0, cut: false };
   const p = game.currentPlayer;
   show(`${topbar()}
     <div class="stage" style="--g:${grad(game.cat)}">
@@ -393,10 +400,23 @@ function startTimer() {
     if (ring) ring.style.strokeDashoffset = String(100 - (left / game.duration) * 100);
     if (time) time.textContent = String(Math.ceil(left));
     if (wrap && left <= 5) wrap.classList.add("urgent");
+    if (game.level === "hard" && !round.cut && audio.getPlayer().currentTime >= HARD_CLIP) cutClip();
     if (left <= 0) return timeUp();
     round.raf = requestAnimationFrame(tick);
   };
   tick();
+}
+
+// Mode difficile : on coupe le son, le chrono continue.
+function cutClip() {
+  round.cut = true;
+  audio.getPlayer().pause();
+  const disc = $("#disc");
+  if (disc) disc.classList.remove("spinning");
+  const eqEl = $(".eq.wide");
+  if (eqEl) eqEl.classList.add("muted-eq");
+  const wrap = $("#disc-wrap");
+  if (wrap) wrap.insertAdjacentHTML("beforeend", `<div class="clip-over">🤫 Fin de l'extrait</div>`);
 }
 
 function elapsed() {
@@ -467,6 +487,10 @@ function reveal(res) {
   if (eqEl) eqEl.classList.add("calm");
   const wrap = $("#disc-wrap");
   if (wrap) wrap.classList.add("revealed");
+  const over = $(".clip-over");
+  if (over) over.remove();
+  // Mode difficile : on fait entendre la suite de l'extrait pendant la réponse.
+  if (round.cut && !res.skipped) audio.resume();
 
   let verdict;
   if (res.skipped) verdict = `<div class="verdict warn">⚠️ Extrait indisponible : manche annulée</div>`;
@@ -529,8 +553,8 @@ function renderResults() {
 
   if (game.mode === "solo") {
     const p = game.players[0];
-    const prev = getRecord(cat.id, n);
-    const isRecord = n === settings.rounds && submitRecord(cat.id, n, p.score);
+    const prev = getRecord(cat.id, n, game.level);
+    const isRecord = n === settings.rounds && submitRecord(cat.id, n, p.score, game.level);
     celebrate = isRecord;
     const pct = p.good / n;
     const mood = pct >= 0.9 ? "Incroyable ! 🤩" : pct >= 0.7 ? "Bravo ! 🎉" : pct >= 0.4 ? "Pas mal ! 👍" : "On s'entraîne encore ? 💪";

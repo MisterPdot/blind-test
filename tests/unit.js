@@ -156,6 +156,21 @@ test("isTypedCorrect tolère accents, casse, articles, fautes", () => {
   ok(!isTypedCorrect("hey", ["Hello"]));
   ok(!isTypedCorrect("U3", ["U2"]));
 });
+test("mode difficile : points ×1,5 et records séparés", () => {
+  eq(scoreFor({ correct: true, elapsed: 20, limit: 20, streak: 1, level: "hard" }), 150);
+  eq(scoreFor({ correct: true, elapsed: 0, limit: 20, streak: 3, level: "hard" }), 375);
+  eq(scoreFor({ correct: false, elapsed: 0, limit: 20, streak: 0, level: "hard" }), 0);
+  localStorage.removeItem("bt-records-v1");
+  ok(submitRecord("pop", 10, 500));
+  ok(submitRecord("pop", 10, 300, "hard"), "record difficile indépendant");
+  eq(getRecord("pop", 10).score, 500);
+  eq(getRecord("pop", 10, "hard").score, 300);
+  localStorage.removeItem("bt-records-v1");
+  const g = new Game({ cat: categoryById("pop"), level: "hard", tracks: fakeTracks(3) });
+  eq(g.level, "hard");
+  const r = g.answer(g.current.track.title, 0);
+  ok(!r.correct || r.points >= 150);
+});
 test("scoreFor : base + rapidité + série", () => {
   eq(scoreFor({ correct: false, elapsed: 1, limit: 20, streak: 0 }), 0);
   eq(scoreFor({ correct: true, elapsed: 0, limit: 20, streak: 1 }), 200);

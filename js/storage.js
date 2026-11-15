@@ -9,6 +9,7 @@ export const DEFAULTS = {
   perPlayer: 5,           // chacun son tour
   duration: 20,           // secondes pour répondre
   answerMode: "choices",  // "choices" | "typing"
+  level: "normal",        // "normal" | "hard" (extrait coupé après quelques secondes)
   players: ["Joueur 1", "Joueur 2"],
 };
 
@@ -26,17 +27,19 @@ export function loadSettings() {
 }
 export function saveSettings(s) { write(SETTINGS, s); }
 
-export function recordKey(catId, rounds) { return `${catId}|${rounds}`; }
+export function recordKey(catId, rounds, level = "normal") {
+  return level === "hard" ? `${catId}|${rounds}|hard` : `${catId}|${rounds}`;
+}
 
-export function getRecord(catId, rounds) {
+export function getRecord(catId, rounds, level) {
   const all = read(RECORDS) || {};
-  return all[recordKey(catId, rounds)] || null;
+  return all[recordKey(catId, rounds, level)] || null;
 }
 
 /** Enregistre le score s'il bat le record. Retourne true si c'est un nouveau record. */
-export function submitRecord(catId, rounds, score) {
+export function submitRecord(catId, rounds, score, level) {
   const all = read(RECORDS) || {};
-  const k = recordKey(catId, rounds);
+  const k = recordKey(catId, rounds, level);
   if (score <= 0 || (all[k] && all[k].score >= score)) return false;
   all[k] = { score, date: new Date().toISOString().slice(0, 10) };
   write(RECORDS, all);

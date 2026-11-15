@@ -418,3 +418,12 @@ h1, h2, h3, p { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* Mode difficile */
+.hard-badge { display: inline-block; margin: 4px 0 0; padding: 5px 12px; border-radius: 999px; font-size: 14px; font-weight: 700;
+  background: rgba(255, 94, 58, 0.18); color: #ffb39e; }
+.eq.muted-eq i { animation: none; height: 12%; opacity: 0.35; }
+.clip-over { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); white-space: nowrap; padding: 6px 12px;
+  border-radius: 999px; background: rgba(13, 8, 32, 0.85); border: 1px solid rgba(255, 255, 255, 0.15); font-size: 14px; font-weight: 600;
+  animation: pop-in 0.25s ease-out; }
+@keyframes pop-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
