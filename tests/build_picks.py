@@ -37,6 +37,8 @@ OVERRIDE = {
 }
 # Listes complémentaires fusionnées dans une catégorie
 MERGE = {"cartoons_extra": "cartoons"}
+# Catégories où l'artiste saisi dans curate.py n'est qu'un mot-clé de recherche : on affiche l'interprète d'Apple.
+APPLE_ARTIST = {"cartoons"}
 
 data = json.loads((ROOT / "tests" / "curated.json").read_text(encoding="utf-8"))
 lines = ["// Morceaux choisis à la main pour les thèmes « sélection » : [identifiant Apple, titre, artiste, œuvre].",
@@ -50,7 +52,7 @@ for cat, rows in merged.items():
         if "id" not in r or (cat, r["title"]) in EXCLUDE or r["id"] in seen:
             continue
         seen.add(r["id"])
-        r = {**r, **OVERRIDE.get((cat, r["title"]), {})}
+        r = {**r, **({"artist": r["an"]} if cat in APPLE_ARTIST else {}), **OVERRIDE.get((cat, r["title"]), {})}
         items.append(json.dumps([r["id"], r["title"], r["artist"], r["work"]], ensure_ascii=False))
     lines.append(f"  {json.dumps(cat)}: [")
     lines += [f"    {it}," for it in items]
