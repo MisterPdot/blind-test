@@ -4,6 +4,7 @@ import { cleanTitle, cleanWork, tracksFromResults, buildPlaylist, searchItunes, 
 import { Game, makeChoices, isTypedCorrect, scoreFor, answerOf } from "../js/game.js";
 import { CATEGORIES, categoryById } from "../js/categories.js";
 import { submitRecord, getRecord } from "../js/storage.js";
+import { PICKS } from "../js/picks.js";
 
 const results = [];
 function test(name, fn) { results.push({ name, fn }); }
@@ -281,12 +282,51 @@ test("searchItunes : la 2e demande identique vient du cache", async () => {
   await searchItunes({ term: "Y" }, { fetchFn: f });
   eq(f.calls.length, 1);
 });
+test("thèmes sélection : une seule requête, infos écrites à la main, pas deux fois la même œuvre", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const cat = categoryById("series");
+  const f = fakeFetch((u) => u.searchParams.get("id").split(",").map((id) =>
+    raw({ trackId: Number(id), trackName: "Nom Apple (Remastered)", artistName: "Artiste Apple" })));
+  const { tracks, extra } = await buildPlaylist(cat, 10, { fetchFn: f });
+  eq(f.calls.length, 1);
+  ok(f.calls[0].startsWith("https://itunes.apple.com/lookup?"), "recherche par identifiants");
+  ok(!f.calls[0].includes("media="), "pas de media=");
+  eq(tracks.length, 10);
+  eq(new Set(tracks.map((t) => fold(t.work))).size, 10);
+  const pick = PICKS.series.find((p) => p[0] === tracks[0].id);
+  eq([tracks[0].title, tracks[0].artist, tracks[0].work], [pick[1], pick[2], pick[3]]);
+  eq(tracks[0].fullArtist, "Artiste Apple");
+  ok(extra.length > 0, "réserve pour les mauvaises réponses");
+  const g = new Game({ cat, tracks, extra });
+  ok(g.rounds.every((r) => r.kind === "work" && r.choices.length === 4 && r.prompt === "De quelle série ?"));
+  // 2e partie : la sélection vient du cache
+  await buildPlaylist(cat, 10, { fetchFn: f });
+  eq(f.calls.length, 1);
+});
+test("thèmes sélection : extraits retirés par Apple ignorés", async () => {
+  localStorage.removeItem("bt-cache-v1");
+  const ids = PICKS.eurovision.map((p) => p[0]);
+  const f = fakeFetch(() => ids.slice(0, 5).map((id) => raw({ trackId: id, trackName: "x", artistName: "y" })));
+  const { tracks } = await buildPlaylist(categoryById("eurovision"), 10, { fetchFn: f });
+  eq(tracks.length, 5);
+  ok(tracks.every((t) => ids.slice(0, 5).includes(t.id)));
+});
+test("toutes les sélections sont fournies et sans doublon", () => {
+  for (const c of CATEGORIES.filter((c) => c.kind === "pick")) {
+    const list = PICKS[c.id];
+    ok(list && list.length >= 20, `${c.id} : au moins 20 morceaux (${list && list.length})`);
+    eq(new Set(list.map((p) => p[0])).size, list.length, `${c.id} : identifiants uniques`);
+    ok(list.every((p) => Number.isInteger(p[0]) && p[1] && p[2]), `${c.id} : titre et artiste`);
+    if ((c.ask || []).includes("work")) ok(list.every((p) => p[3]), `${c.id} : œuvre`);
+    ok(list.length <= 150, `${c.id} : une seule requête`);
+  }
+});
 test("toutes les catégories sont valides", () => {
   const ids = new Set();
   for (const c of CATEGORIES) {
     ok(!ids.has(c.id), `id unique ${c.id}`); ids.add(c.id);
     ok(c.name && c.emoji && c.colors.length === 2, c.id);
-    if (!c.mix) {
+    if (!c.mix && c.kind !== "pick") {
       const list = c.kind === "work" ? c.works : c.artists;
       ok(list && list.length >= 12, `${c.id} : au moins 12 sources (${list && list.length})`);
     }

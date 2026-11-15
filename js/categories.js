@@ -2,6 +2,7 @@
 //  - kind "artist" (défaut) : on cherche les morceaux les plus populaires de chaque artiste.
 //  - kind "work"  : on cherche les chansons d'une œuvre (film, comédie musicale…) ; la réponse est l'œuvre.
 //  - kind "score" : musiques de films par compositeur ; la réponse est le film (tiré du nom de l'album).
+//  - kind "pick"  : morceaux choisis un par un (liste dans js/picks.js, préparée avec tests/curate.py).
 // minYear / maxYear : filtre sur l'année de sortie (seulement pour les époques récentes, car les vieux
 // tubes sont souvent ressortis en « remaster » avec une date récente).
 
@@ -115,6 +116,14 @@ export const CATEGORIES = [
       "Desireless", "Tears for Fears", "Rick Astley", "Mylène Farmer", "Europe"],
   },
   {
+    id: "80sfr", group: "epoques", name: "Spécial 80's français", emoji: "📻", colors: ["#ff2e93", "#2d5bff"],
+    kind: "pick",
+  },
+  {
+    id: "80sint", group: "epoques", name: "Spécial 80's international", emoji: "🕹️", colors: ["#00e5ff", "#ff00a8"],
+    kind: "pick",
+  },
+  {
     id: "90s", group: "epoques", name: "Années 90", emoji: "💿", colors: ["#00c6ff", "#7b2ff7"],
     artists: ["Nirvana", "Spice Girls", "Backstreet Boys", "Britney Spears", "Oasis", "Céline Dion", "TLC",
       "Ace of Base", "Eiffel 65", "Alanis Morissette", "No Doubt", "Fugees", "Haddaway", "Las Ketchup",
@@ -175,6 +184,26 @@ export const CATEGORIES = [
     artists: ["Los Del Rio", "Lou Bega", "Kaoma", "Las Ketchup", "Luis Fonsi", "Daddy Yankee", "Gipsy Kings",
       "Bob Sinclar", "Magic System", "Pitbull", "Enrique Iglesias", "Inner Circle", "Shakira", "Kungs",
       "Mika", "Major Lazer", "OMI", "Alvaro Soler"],
+  },
+  {
+    id: "series", group: "themes", name: "Séries TV", emoji: "📺", colors: ["#e50914", "#3a0ca3"],
+    kind: "pick", ask: ["work"], prompts: { work: "De quelle série ?" },
+  },
+  {
+    id: "cartoons", group: "themes", name: "Dessins animés", emoji: "🧸", colors: ["#ffb703", "#fb5607"],
+    kind: "pick", ask: ["work"], prompts: { work: "De quel dessin animé ?" },
+  },
+  {
+    id: "moviesongs", group: "themes", name: "Chansons de films", emoji: "🍿", colors: ["#ff006e", "#ffbe0b"],
+    kind: "pick", ask: ["work", "title"], prompts: { work: "De quel film ?" },
+  },
+  {
+    id: "eurovision", group: "themes", name: "Eurovision", emoji: "🎆", colors: ["#7209b7", "#f72585"],
+    kind: "pick",
+  },
+  {
+    id: "suisse", group: "themes", name: "Chansons suisses", emoji: "🇨🇭", colors: ["#d52b1e", "#ff7a6b"],
+    kind: "pick",
   },
 ];
 

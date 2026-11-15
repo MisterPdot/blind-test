@@ -8,10 +8,11 @@ avec son icône, comme une app de l'App Store, sans Mac, sans App Store et gratu
 
 ## Contenu
 
-- **26 catégories** :
+- **33 catégories** :
   - **Genres** : Pop, Rock, Rap FR, Rap US, Électro, Chanson française, Pop française, R&B, Jazz, Reggae, Métal, Disco, Classique, K-pop.
-  - **Époques** : des années 60 aux années 2020.
-  - **Thèmes** : Mix surprise, Disney, Musiques de films, Comédies musicales, Tubes de l'été.
+  - **Époques** : des années 60 aux années 2020, plus un Spécial 80's français et un Spécial 80's international.
+  - **Thèmes** : Mix surprise, Disney, Musiques de films, Comédies musicales, Tubes de l'été, Séries TV, Dessins animés,
+    Chansons de films, Eurovision, Chansons suisses.
 - **Solo** : 10, 15 ou 20 morceaux, avec un bonus de rapidité, un bonus de série (3 bonnes réponses d'affilée) et un record par catégorie.
 - **Entre amis, sur un seul téléphone** :
   - *Chacun son tour* : on se passe le téléphone (2 à 6 joueurs).
@@ -30,6 +31,10 @@ sans compte et sans clé. Le catalogue utilisé est le catalogue **français**.
 - Pour chaque artiste, les morceaux sont tirés parmi les plus populaires selon Apple. De temps en temps, un titre moins connu
   peut quand même sortir.
 
+Les thèmes « sélection » (Spécial 80's, Séries TV, Dessins animés, Chansons de films, Eurovision, Chansons suisses)
+contiennent des morceaux choisis un par un : c'est toujours la version originale, et une partie ne fait qu'une seule
+recherche auprès d'Apple.
+
 ## Installer sur l'iPhone
 
 L'app doit être servie par une adresse **https**. Deux possibilités :
@@ -45,6 +50,9 @@ Ensuite, dans **Safari**, touchez **Partager ⬆︎**, puis **« Sur l'écran d'
 
 - Le code est en JavaScript « pur » (modules ES), sans framework ni compilation.
   - `js/categories.js` : les catégories. Pour **ajouter un thème**, il suffit d'ajouter une entrée avec une liste d'artistes.
+  - `js/picks.js` : les morceaux des thèmes « sélection ». Pour en ajouter : compléter la liste dans
+    `tests/curate.py`, lancer `python tests/curate.py <thème>` (recherche dans le catalogue Apple), relire le résultat,
+    écarter les mauvaises versions dans `tests/build_picks.py`, puis lancer `python tests/build_picks.py`.
   - `js/music.js` : la recherche des extraits, le nettoyage des titres et la construction de la playlist.
   - `js/game.js` : les règles, les propositions, la correction des réponses tapées et les points.
   - `js/app.js` : l'interface.

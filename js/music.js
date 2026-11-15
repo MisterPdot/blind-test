@@ -1,8 +1,10 @@
 // Récupération des extraits (API publique iTunes Search : extraits officiels de 30 s, gratuits).
 import { CATEGORIES } from "./categories.js";
+import { PICKS } from "./picks.js";
 import { fold, shuffle } from "./util.js";
 
 const API = "https://itunes.apple.com/search";
+const LOOKUP = "https://itunes.apple.com/lookup";
 // NB : ne jamais ajouter « media=music » : sur iPhone, Apple redirige alors vers l’app Musique (musics://)
 // au lieu de répondre, et la recherche échoue.
 const CACHE_KEY = "bt-cache-v1";
@@ -77,9 +79,7 @@ function slim(r) {
   };
 }
 
-export async function searchItunes(params, { fetchFn = fetch, timeout = 10000 } = {}) {
-  const qs = new URLSearchParams({ entity: "song", country: "FR", lang: "fr_fr", ...params });
-  const url = `${API}?${qs}`;
+async function fetchApple(url, { fetchFn = fetch, timeout = 10000 } = {}) {
   const cache = loadCache();
   const hit = cache[url];
   if (hit && Date.now() - hit.t < CACHE_TTL) return hit.r;
@@ -102,6 +102,17 @@ export async function searchItunes(params, { fetchFn = fetch, timeout = 10000 } 
   cache[url] = { t: Date.now(), r: results };
   saveCache(cache);
   return results;
+}
+
+export function searchItunes(params, opts) {
+  const qs = new URLSearchParams({ entity: "song", country: "FR", lang: "fr_fr", ...params });
+  return fetchApple(`${API}?${qs}`, opts);
+}
+
+/** Plusieurs morceaux précis d'un coup, par leurs identifiants Apple (une seule requête). */
+export function lookupItunes(ids, opts) {
+  const qs = new URLSearchParams({ id: ids.join(","), country: "FR", lang: "fr_fr" });
+  return fetchApple(`${LOOKUP}?${qs}`, opts);
 }
 
 // ───────────── Sources d'une catégorie ─────────────
@@ -187,6 +198,7 @@ async function fetchSource(source, opts) {
  * (morceaux restants, utiles pour fabriquer des mauvaises réponses crédibles).
  */
 export async function buildPlaylist(cat, count, opts = {}) {
+  if (cat.kind === "pick") return buildPickPlaylist(cat, count, opts);
   const sources = sourcesOf(cat);
   const perSource = Math.max(2, Math.ceil(count / Math.min(sources.length, 8)) + 1);
   const buckets = [];
@@ -242,4 +254,40 @@ export async function buildPlaylist(cat, count, opts = {}) {
     throw new MusicError("empty", "Aucun extrait trouvé pour ce thème.");
   }
   return { tracks: shuffle(tracks), extra: rest };
+}
+
+// ───────────── Thèmes « sélection » : morceaux choisis à la main (js/picks.js) ─────────────
+// Chaque entrée : [identifiant Apple, titre, artiste, œuvre]. Titre, artiste et œuvre sont écrits à la main,
+// Apple ne fournit que l'extrait, la pochette et le lien.
+export function tracksFromPicks(results, picks, cat) {
+  const byId = new Map(results.map((r) => [String(r.trackId), r]));
+  const out = [];
+  for (const [id, title, artist, work] of picks) {
+    const r = byId.get(String(id));
+    if (!r || !r.previewUrl) continue;
+    out.push({
+      id: r.trackId, title, artist, fullArtist: r.artistName, album: r.collectionName || "", work: work || "",
+      year: null, preview: r.previewUrl, art: art(r.artworkUrl100), link: r.trackViewUrl || "",
+      catId: cat.id, source: artist,
+    });
+  }
+  return out;
+}
+
+async function buildPickPlaylist(cat, count, opts) {
+  const picks = PICKS[cat.id] || [];
+  // Apple accepte une liste d'identifiants : toute la sélection en une seule requête, gardée en cache.
+  const results = await lookupItunes(picks.map((p) => p[0]), opts);
+  const all = shuffle(tracksFromPicks(results, picks, cat));
+  // Pas deux fois la même œuvre (ex. deux génériques de la même série) dans une partie.
+  const tracks = [];
+  const seen = new Set();
+  for (const t of all) {
+    const k = fold(t.work || t.title + "|" + t.artist);
+    if (seen.has(k) || tracks.length >= count) continue;
+    seen.add(k); tracks.push(t);
+  }
+  if (tracks.length < Math.min(count, 3)) throw new MusicError("empty", "Aucun extrait trouvé pour ce thème.");
+  const extra = all.filter((t) => !tracks.includes(t));
+  return { tracks, extra };
 }

@@ -3,3 +3,4 @@ __pycache__/
 tests/screens/
 tests/live_report.json
 tests/live_log.txt
+tests/curate_log*.txt

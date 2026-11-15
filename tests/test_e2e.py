@@ -45,6 +45,15 @@ def _songs(term):
     return out
 
 
+def _lookup(ids):
+    return [{
+        "kind": "song", "trackId": int(tid), "trackName": "Nom Apple", "artistName": "Artiste Apple",
+        "collectionName": "Album", "previewUrl": f"https://audio.test/{tid}.wav",
+        "artworkUrl100": f"https://art.test/{tid}/100x100bb.jpg", "trackViewUrl": "https://music.apple.com/fr/x",
+        "releaseDate": "2011-05-01T07:00:00Z",
+    } for tid in ids]
+
+
 def _new_page(browser, base_url, api="ok", audio_ok=True):
     ctx = browser.new_context(**IPHONE)
     page = ctx.new_page()
@@ -61,10 +70,11 @@ def _new_page(browser, base_url, api="ok", audio_ok=True):
             return route.abort()
         if api == "hang":
             return  # ne répond jamais : chargement interminable
-        term = parse_qs(urlparse(route.request.url).query)["term"][0]
+        q = parse_qs(urlparse(route.request.url).query)
+        results = _lookup(q["id"][0].split(",")) if "id" in q else _songs(q["term"][0])
         route.fulfill(status=200, content_type="text/javascript",
                       headers={"Access-Control-Allow-Origin": "*"},
-                      body=json.dumps({"resultCount": 16, "results": _songs(term)}))
+                      body=json.dumps({"resultCount": len(results), "results": results}))
 
     ctx.route("https://itunes.apple.com/**", itunes)
     ctx.route("https://audio.test/**", lambda r: r.fulfill(status=200, content_type="audio/wav", body=WAV)
@@ -110,9 +120,9 @@ def test_accueil_et_categories(browser, base_url):
     page.screenshot(path=str(SHOTS / "01-accueil.png"))
     assert page.locator(".tile").count() == 14  # Genres
     page.click("[data-tab=epoques]")
-    assert page.locator(".tile").count() == 7
+    assert page.locator(".tile").count() == 9
     page.click("[data-tab=themes]")
-    assert page.locator(".tile").count() == 5
+    assert page.locator(".tile").count() == 10
     page.screenshot(path=str(SHOTS / "02-themes.png"))
     # l'invite « installer sur l'iPhone » s'affiche (Safari iOS simulé) et se ferme
     assert page.locator("#install-hint").is_visible()
@@ -121,6 +131,31 @@ def test_accueil_et_categories(browser, base_url):
     assert page.locator("#install-hint").count() == 0
     # pas de défilement horizontal sur un écran d'iPhone
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    _no_problems(page)
+    ctx.close()
+
+
+def test_themes_selection_series_et_80s(browser, base_url):
+    ctx, page = _new_page(browser, base_url)
+    for cat, prompt in [("series", "De quelle série ?"), ("80sfr", None)]:
+        _open(page, cat)
+        page.click("#play")
+        page.wait_for_selector("#go")
+        page.click("#go")
+        for i in range(3):
+            page.wait_for_selector(".choice")
+            if prompt:
+                assert prompt in page.inner_text(".prompt")
+            good = _correct(page)
+            page.locator(".choice", has_text=good).first.click()
+            page.wait_for_selector(".verdict.ok")
+            if i == 0:
+                page.screenshot(path=str(SHOTS / f"15-{cat}.png"))
+            page.click("#next")
+        page.goto(base_url + "/")
+        page.wait_for_selector(".tile")
+    lookups = [c for c in page.api_calls if "/lookup?" in c]
+    assert len(lookups) == 2 and len(page.api_calls) == 2, page.api_calls
     _no_problems(page)
     ctx.close()
 
