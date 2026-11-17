@@ -25,6 +25,9 @@ avec son icône, comme une app de l'App Store, sans Mac, sans App Store et gratu
   - 🎙️ *Karaoké* (voix retirée), 🎈 *Hélium*, 🐢 *Au ralenti*, ⏪ *À l'envers*, 🌊 *Sous l'eau*, 📻 *Vieille radio*,
     🧩 *Puzzle* (extrait découpé et mélangé), 🎲 *Défis surprise* (un effet différent à chaque morceau).
   - Les effets sont fabriqués sur le téléphone à partir de l'extrait d'Apple. Après la réponse, on entend la version originale.
+- **Défis surprise dans les parties normales** (genres, époques, thèmes) : réglage « Aucun / Quelques-uns / Beaucoup »
+  (environ un tiers ou plus de la moitié des morceaux, activé sur « Quelques-uns » par défaut). Un défi au hasard est glissé
+  dans ces morceaux : effet sonore ou paroles manquantes. Les records sont comptés à part pour chaque réglage.
 - **Réponses** : 4 propositions, ou réponse tapée. La réponse tapée tolère les fautes, les accents oubliés et les « The / Le / La ».
 - **Récapitulatif** en fin de partie : on peut réécouter chaque extrait ou l'ouvrir dans Apple Music.
 

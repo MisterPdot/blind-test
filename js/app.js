@@ -1,11 +1,11 @@
 // Interface du blind test : écrans d'accueil, réglages, manches, révélation, résultats.
 import { GROUPS, CATEGORIES, categoryById } from "./categories.js";
 import { buildPlaylist } from "./music.js";
-import { Game, HARD_CLIP, answerOf } from "./game.js";
-import { CHALLENGES, NO_LYRICS, challengeById } from "./challenges.js";
+import { Game, HARD_CLIP, answerOf, recordIdFor } from "./game.js";
+import { CHALLENGES, NO_LYRICS, challengeById, mixRate } from "./challenges.js";
 import { EFFECTS, prepareEffect, clearEffects } from "./effects.js";
 import { attachLyrics } from "./lyrics.js";
-import { escapeHtml as e } from "./util.js";
+import { escapeHtml as e, shuffle } from "./util.js";
 import * as audio from "./audio.js";
 import { loadSettings, saveSettings, getRecord, submitRecord } from "./storage.js";
 
@@ -59,7 +59,7 @@ function renderHome() {
         <span class="tile-emoji">${c.emoji}</span>
         <span class="tile-name">${e(c.name)}</span>
       </button>`).join("") : CATEGORIES.filter((c) => c.group === tab).map((c) => {
-    const rec = settings.audience === "solo" ? getRecord(c.id, settings.rounds, settings.level) : null;
+    const rec = settings.audience === "solo" ? getRecord(recordIdFor(c, null, settings.surprise), settings.rounds, settings.level) : null;
     return `<button class="tile" data-cat="${c.id}" style="--g:${grad(c)}">
         <span class="tile-emoji">${c.emoji}</span>
         <span class="tile-name">${e(c.name)}</span>
@@ -127,9 +127,18 @@ function musicField(ch) {
     ch.id === "lyrics" ? "Les paroles viennent de la base libre LRCLIB : les morceaux sans paroles sont passés." : "");
 }
 
+// Défis glissés au hasard dans une partie normale (genres, époques, thèmes).
+const SURPRISE_LABELS = { off: "Aucun", some: "Quelques-uns", lots: "Beaucoup" };
+function surpriseField(cat) {
+  const what = NO_LYRICS.has(cat.id) ? "hélium, ralenti, à l'envers, karaoké…" : "hélium, à l'envers, karaoké, paroles manquantes…";
+  return field("Défis surprise 🎲", seg("surprise", settings.surprise, Object.entries(SURPRISE_LABELS)),
+    settings.surprise === "off" ? "Uniquement les extraits normaux."
+      : `${settings.surprise === "lots" ? "Plus de la moitié" : "Environ un tiers"} des morceaux arrivent avec un défi : ${what}`);
+}
+
 function sheetBody(cat, ch = null) {
   if (ch) cat = challengeCat(ch);
-  const recId = ch ? `${ch.id}-${cat.id}` : cat.id;
+  const recId = recordIdFor(cat, ch, settings.surprise);
   const friends = settings.audience === "friends";
   const times = [[10, "10 s"], [20, "20 s"], [30, "30 s"]];
   const answers = [["choices", "4 propositions"], ["typing", "Je tape"]];
@@ -137,7 +146,7 @@ function sheetBody(cat, ch = null) {
     settings.level === "hard"
       ? `L'extrait s'arrête après ${HARD_CLIP} secondes, mais le chrono continue.${settings.audience === "friends" && settings.friendsMode === "party" ? "" : " Points ×1,5."}`
       : "On entend l'extrait pendant tout le temps de réponse.");
-  const music = ch ? musicField(ch) : "";
+  const music = ch ? musicField(ch) : surpriseField(cat);
   if (!friends) {
     const rec = getRecord(recId, settings.rounds, settings.level);
     return music + field("Nombre de morceaux", seg("rounds", settings.rounds, [[10, "10"], [15, "15"], [20, "20"]]))
@@ -263,6 +272,19 @@ async function startGame(cat, ch = null) {
   try {
     let { tracks, extra } = await buildPlaylist(cat, ch && ch.id === "lyrics" ? count + 12 : count);
     if (token !== loadToken) return;
+    const mix = ch ? "off" : settings.surprise;
+    let lyricTracks = [];
+    if (mixRate(mix) && !NO_LYRICS.has(cat.id)) {
+      // Défis surprise : quelques questions de paroles (au plus un tiers des défis), sans faire attendre plus de ~10 s.
+      const want = Math.ceil(Math.max(1, Math.round(mixRate(mix) * count)) / 3);
+      const title = $("#load-title");
+      if (title) title.textContent = "On prépare les défis…";
+      const deadline = Date.now() + 10000;
+      lyricTracks = await attachLyrics(shuffle(tracks).slice(0, want + 3), want, {
+        isCancelled: () => token !== loadToken || Date.now() > deadline,
+      }).catch(() => []);
+      if (token !== loadToken) return;
+    }
     if (ch && ch.id === "lyrics") {
       const all = tracks.concat(extra);
       const title = $("#load-title");
@@ -284,7 +306,7 @@ async function startGame(cat, ch = null) {
     }
     if (tracks.length < count) toast(`Seulement ${tracks.length} extraits trouvés pour ce thème.`);
     game = new Game({ cat, mode, players, duration: settings.duration, answerMode: settings.answerMode, level: settings.level,
-      challenge: ch && ch.id, tracks, extra });
+      challenge: ch && ch.id, mix, lyricTracks, tracks, extra });
     if (game.rounds[0].effect) {
       // Premier extrait transformé à l'avance (les suivants pendant la partie).
       const title = $("#load-title");
@@ -381,6 +403,7 @@ function showIntro() {
        <h2>${e(game.challenge ? game.challenge.name : game.cat.name)}</h2>
        ${game.challenge ? `<p class="muted">${e(game.cat.emoji)} ${e(game.cat.name)}</p><p class="small">${e(game.challenge.desc)}</p>` : ""}
        <p class="muted">${game.rounds.length} morceaux · ${game.duration} s pour répondre</p>
+       ${game.mix !== "off" ? `<p class="small">🎲 Défis surprise : ${game.rounds.filter((x) => x.mixed).length} morceaux vous réservent un défi !</p>` : ""}
        ${game.level === "hard" ? `<p class="hard-badge">🔥 Difficile : extraits de ${HARD_CLIP} s</p>` : ""}
        ${game.mode === "party"
          ? `<div class="chips">${game.players.map((q) => `<span class="chip"><span class="dot" style="--c:${q.color}"></span>${e(q.name)}</span>`).join("")}</div>
@@ -428,7 +451,8 @@ function beginRound() {
   const p = game.currentPlayer;
   show(`${topbar()}
     <div class="stage${r.kind === "lyrics" ? " compact" : ""}" style="--g:${grad(game.cat)}">
-      ${r.effect ? `<div class="fx-badge" id="fx-badge">${EFFECTS[r.effect].emoji} ${e(EFFECTS[r.effect].label)}</div>` : ""}
+      ${r.effect ? `<div class="fx-badge" id="fx-badge">${r.mixed ? "🎲 Défi : " : ""}${EFFECTS[r.effect].emoji} ${e(EFFECTS[r.effect].label)}</div>`
+        : r.mixed ? `<div class="fx-badge" id="fx-badge">🎲 Défi : 🎤 Paroles manquantes</div>` : ""}
       <div class="disc-wrap" id="disc-wrap">
         <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="ring-bg" cx="60" cy="60" r="56"/>
@@ -479,7 +503,7 @@ function beginRound() {
       if (r.fx) {
         if (r.fx.effect !== r.effect) {
           const b = $("#fx-badge");
-          if (b) b.textContent = `${EFFECTS[r.fx.effect].emoji} ${EFFECTS[r.fx.effect].label}`;
+          if (b) b.textContent = `${r.mixed ? "🎲 Défi : " : ""}${EFFECTS[r.fx.effect].emoji} ${EFFECTS[r.fx.effect].label}`;
         }
         start(r.fx.url);
       } else {
@@ -675,7 +699,7 @@ function renderResults() {
     const pct = p.good / n;
     const mood = pct >= 0.9 ? "Incroyable ! 🤩" : pct >= 0.7 ? "Bravo ! 🎉" : pct >= 0.4 ? "Pas mal ! 👍" : "On s'entraîne encore ? 💪";
     head = `
-      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}</p>
+      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}${game.mix !== "off" ? ` · 🎲 ${SURPRISE_LABELS[game.mix].toLowerCase()} défis` : ""}</p>
       <h2 class="mood">${mood}</h2>
       <div class="big-score"><span id="final-score">${p.score}</span><small>points</small></div>
       ${isRecord ? `<div class="badge-record">🏆 Nouveau record !</div>` : prev ? `<p class="muted small">Record : ${prev.score} pts</p>` : ""}
@@ -688,7 +712,7 @@ function renderResults() {
     const top = ranking[0];
     const tie = ranking.length > 1 && ranking[1].score === top.score && ranking[1].good === top.good;
     head = `
-      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}</p>
+      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}${game.mix !== "off" ? ` · 🎲 ${SURPRISE_LABELS[game.mix].toLowerCase()} défis` : ""}</p>
       <h2 class="mood">${tie ? "Égalité ! 🤝" : `${e(top.name)} gagne ! 👑`}</h2>
       <ol class="podium">${ranking.map((p, i) => `
         <li class="rank r${i + 1}" style="--c:${p.color}">

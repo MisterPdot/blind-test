@@ -24,8 +24,13 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errs.append(str(e)))
     for ch, music in PLAN:
         page.goto(url); page.wait_for_selector(".tile")
-        page.click("[data-tab=defis]"); page.click(f".tile[data-challenge='{ch}']"); page.wait_for_timeout(400)
-        page.select_option("#challenge-cat", music)
+        if ch.startswith("+"):  # « +lots/popfr » : partie normale avec défis surprise
+            group = page.evaluate("(id) => import('./js/categories.js').then(m => m.categoryById(id).group)", music)
+            page.click(f"[data-tab={group}]"); page.click(f".tile[data-cat='{music}']"); page.wait_for_timeout(400)
+            page.click(f"#sheet-root [data-key=surprise] [data-val='{ch[1:]}']")
+        else:
+            page.click("[data-tab=defis]"); page.click(f".tile[data-challenge='{ch}']"); page.wait_for_timeout(400)
+            page.select_option("#challenge-cat", music)
         page.click("#play")
         page.wait_for_selector("#go, .error-card", timeout=90000)
         assert page.locator("#go").count(), f"ÉCHEC {ch}/{music} : " + page.inner_text("main")
@@ -39,12 +44,15 @@ with sync_playwright() as p:
         info = page.evaluate("""(() => { const g = BT.game; return {
             n: g.rounds.length,
             fx: g.rounds.map(r => r.fx ? r.fx.effect : (r.fxFailed ? 'ÉCHEC' : '…')),
-            q: g.rounds.filter(r => r.track.lyric).map(r => `${r.track.title} — ${r.track.artist} : « ${r.track.lyric.full} » → ${r.track.lyric.answer} / ${r.track.lyric.decoys.join(', ')}`) }; })()""")
+            plan: g.rounds.map(r => r.kind === 'lyrics' ? 'paroles' : (r.effect || '-')),
+            q: g.rounds.filter(r => r.kind === 'lyrics').map(r => `${r.track.title} — ${r.track.artist} : « ${r.track.lyric.full} » → ${r.track.lyric.answer} / ${r.track.lyric.decoys.join(', ')}`) }; })()""")
         print(f"\n[{ch} · {music}] {info['n']} manches | lecture : {'oui' if not st['paused'] and st['t'] > 1 else 'NON'} ({st['src']}, {st['t']:.1f} s)")
+        if ch.startswith("+"):
+            print("  manches :", info["plan"])
         if ch != "lyrics":
             print("  effets préparés :", info["fx"][:3])
-            badge = page.inner_text("#fx-badge")
-            print("  bandeau :", badge)
+            if page.locator("#fx-badge").count():
+                print("  bandeau :", page.inner_text("#fx-badge"))
         for q in info["q"]:
             print("  ", q)
         assert not st["paused"] and st["t"] > 1, ch

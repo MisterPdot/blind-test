@@ -62,8 +62,11 @@ def _lookup(ids):
     } for tid in ids]
 
 
-def _new_page(browser, base_url, api="ok", audio_ok=True):
+def _new_page(browser, base_url, api="ok", audio_ok=True, surprise="off"):
     ctx = browser.new_context(**IPHONE)
+    # Défis surprise désactivés par défaut dans les tests (parties prévisibles), sauf demande.
+    ctx.add_init_script("if (!localStorage.getItem('bt-settings-v1')) localStorage.setItem('bt-settings-v1', "
+                        f"JSON.stringify({{surprise: '{surprise}'}}))" if surprise else "")
     page = ctx.new_page()
     problems = []
     page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
@@ -256,6 +259,59 @@ def test_defi_karaoke_mono_et_surprise(browser, base_url):
         page.wait_for_selector("#next")
         page.click("#next")
     assert len(seen) >= 2, seen
+    _no_problems(page)
+    ctx.close()
+
+
+def test_defis_surprise_dans_une_partie_normale(browser, base_url):
+    ctx, page = _new_page(browser, base_url, surprise=None)  # réglage par défaut de l'app
+    _open(page, "popfr")
+    assert page.locator("[data-key=surprise] [data-val=some].on").count() == 1, "activé par défaut"
+    assert "Environ un tiers" in page.inner_text("#sheet-root")
+    _set(page, "surprise", "lots")
+    assert "Plus de la moitié" in page.inner_text("#sheet-root")
+    page.click("#play")
+    page.wait_for_selector("#go", timeout=30000)
+    assert "6 morceaux vous réservent un défi" in page.inner_text("main")
+    rounds = page.evaluate("BT.game.rounds.map(r => ({mixed: r.mixed, kind: r.kind, effect: r.effect}))")
+    assert sum(r["mixed"] for r in rounds) == 6
+    assert sum(r["kind"] == "lyrics" for r in rounds) == 2, rounds
+    assert all(r["mixed"] == (r["kind"] == "lyrics" or bool(r["effect"])) for r in rounds)
+    page.click("#go")
+    seen = {"lyrics": 0, "fx": 0, "plain": 0}
+    for i, r in enumerate(rounds):
+        page.wait_for_selector(".choice")
+        page.wait_for_timeout(300)
+        badge = page.locator("#fx-badge")
+        if r["kind"] == "lyrics":
+            assert "Paroles manquantes" in badge.inner_text() and page.locator("#lyric-card").count() == 1
+            seen["lyrics"] += 1
+        elif r["effect"]:
+            page.wait_for_function("BT.game.current.fx || BT.game.current.fxFailed", timeout=15000)
+            page.wait_for_timeout(300)
+            assert badge.inner_text().startswith("🎲 Défi"), badge.inner_text()
+            assert _player(page)["src"].startswith("blob:"), "extrait transformé"
+            seen["fx"] += 1
+        else:
+            assert badge.count() == 0 and page.locator("#lyric-card").count() == 0
+            page.wait_for_timeout(200)
+            assert "audio.test" in _player(page)["src"]
+            seen["plain"] += 1
+        good = _correct(page)
+        page.locator(".choice", has_text=good).first.click()
+        page.wait_for_selector(".verdict.ok")
+        if r["effect"]:
+            page.wait_for_timeout(300)
+            assert "audio.test" in _player(page)["src"], "version originale après la réponse"
+        if i == 1:
+            page.screenshot(path=str(SHOTS / "18-defi-surprise.png"))
+        page.click("#next")
+    page.wait_for_selector(".big-score")
+    assert "beaucoup défis" in page.inner_text("main")
+    assert seen == {"lyrics": 2, "fx": 4, "plain": 4}, seen
+    page.click("#home")
+    page.wait_for_selector(".tile")
+    assert page.evaluate("JSON.parse(localStorage.getItem('bt-records-v1'))['popfr+lots|10'].score") > 0
     _no_problems(page)
     ctx.close()
 

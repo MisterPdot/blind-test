@@ -1,7 +1,7 @@
 // Règles du jeu : choix de la question, propositions, correction, points. Aucune dépendance au DOM.
 import { fold, shuffle, levenshtein, random } from "./util.js";
 import { promptFor } from "./categories.js";
-import { challengeById, SURPRISE_EFFECTS } from "./challenges.js";
+import { challengeById, SURPRISE_EFFECTS, mixRate } from "./challenges.js";
 
 /** Mode difficile : l'extrait s'arrête après ce nombre de secondes, et les points sont multipliés. */
 export const HARD_CLIP = 5;
@@ -85,14 +85,26 @@ export function scoreFor({ correct, elapsed, limit, streak, level = "normal" }) 
   return level === "hard" ? Math.round(pts * HARD_BONUS) : pts;
 }
 
+/** Identifiant des records : catégorie seule, défi + catégorie, ou catégorie + niveau de défis surprise. */
+export function recordIdFor(cat, challenge = null, mix = "off") {
+  if (challenge) return `${challenge.id}-${cat.id}`;
+  return mixRate(mix) ? `${cat.id}+${mix}` : cat.id;
+}
+
 export class Game {
   /**
    * mode : "solo" | "turns" (chacun son tour, on se passe le téléphone) | "party" (un animateur attribue les points)
    * answerMode : "choices" | "typing"
    */
-  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", level = "normal", challenge = null, tracks, extra = [] }) {
+  /**
+   * mix : défis surprise glissés au hasard dans une partie normale ("off" | "some" | "lots").
+   * lyricTracks : morceaux dont la question de paroles est prête (track.lyric), utilisables par le mix.
+   */
+  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", level = "normal", challenge = null,
+    mix = "off", lyricTracks = [], tracks, extra = [] }) {
     this.cat = cat;
     this.challenge = challengeById(challenge);
+    this.mix = this.challenge || !mixRate(mix) ? "off" : mix;
     this.level = level === "hard" ? "hard" : "normal";
     this.mode = mode;
     this.duration = duration;
@@ -103,16 +115,36 @@ export class Game {
     const pool = tracks.concat(extra);
     const ch = this.challenge;
     let lastFx = null;
+    const pickFx = () => {
+      const opts = SURPRISE_EFFECTS.filter((x) => x !== lastFx);
+      return opts[Math.floor(random() * opts.length)];
+    };
+    // Mix : une part fixe des manches (au moins une) reçoit un défi, à des places tirées au hasard.
+    // Les questions de paroles prêtes en font partie (au plus un tiers des défis), le reste en effets sonores.
+    const mixed = new Map(); // index de manche -> "lyrics" | "fx"
+    const rate = mixRate(this.mix);
+    if (rate && tracks.length) {
+      const want = Math.max(1, Math.round(rate * tracks.length));
+      const lyricIdx = shuffle(tracks.map((t, i) => i).filter((i) => tracks[i].lyric && lyricTracks.includes(tracks[i])))
+        .slice(0, Math.ceil(want / 3));
+      lyricIdx.forEach((i) => mixed.set(i, "lyrics"));
+      shuffle(tracks.map((t, i) => i).filter((i) => !mixed.has(i))).slice(0, want - mixed.size).forEach((i) => mixed.set(i, "fx"));
+    }
     this.rounds = tracks.map((track, i) => {
-      const kind = ch && ch.id === "lyrics" ? "lyrics" : chooseKind(cat, track);
-      let effect = ch ? ch.effect || null : null;
-      if (ch && ch.surprise) {
-        const opts = SURPRISE_EFFECTS.filter((x) => x !== lastFx);
-        effect = opts[Math.floor(random() * opts.length)];
+      let kind;
+      let effect = null;
+      if (ch) {
+        kind = ch.id === "lyrics" ? "lyrics" : chooseKind(cat, track);
+        effect = ch.surprise ? pickFx() : ch.effect || null;
+      } else if (mixed.get(i) === "lyrics") {
+        kind = "lyrics";
+      } else {
+        kind = chooseKind(cat, track);
+        if (mixed.get(i) === "fx") effect = pickFx();
       }
-      lastFx = effect;
+      if (effect) lastFx = effect;
       return {
-        track, kind, effect,
+        track, kind, effect, mixed: mixed.has(i),
         prompt: kind === "lyrics" ? "Complétez les paroles" : promptFor(cat, kind),
         choices: this.answerMode === "choices" ? makeChoices(track, kind, pool, cat) : null,
         player: mode === "turns" ? i % this.players.length : 0,
@@ -123,7 +155,7 @@ export class Game {
   }
 
   /** Identifiant des records : catégorie seule, ou défi + catégorie. */
-  get recordId() { return this.challenge ? `${this.challenge.id}-${this.cat.id}` : this.cat.id; }
+  get recordId() { return recordIdFor(this.cat, this.challenge, this.mix); }
 
   get current() { return this.rounds[this.index]; }
   get currentPlayer() { return this.players[this.current.player]; }

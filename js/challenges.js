@@ -43,6 +43,10 @@ export const NO_LYRICS = new Set(["classique", "films", "series", "cartoons"]);
 
 export const SURPRISE_EFFECTS = ["helium", "slow", "reverse", "underwater", "radio", "karaoke", "puzzle"];
 
+/** Défis surprise glissés au hasard dans une partie normale : part des morceaux concernés. */
+export const MIX_LEVELS = { off: 0, some: 0.3, lots: 0.6 };
+export function mixRate(level) { return MIX_LEVELS[level] || 0; }
+
 export function challengeById(id) {
   return CHALLENGES.find((c) => c.id === id) || null;
 }

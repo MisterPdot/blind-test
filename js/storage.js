@@ -12,6 +12,7 @@ export const DEFAULTS = {
   level: "normal",        // "normal" | "hard" (extrait coupé après quelques secondes)
   players: ["Joueur 1", "Joueur 2"],
   challengeCat: "mix",     // musique des défis
+  surprise: "some",       // défis glissés au hasard dans les parties normales : "off" | "some" | "lots"
 };
 
 function read(key) {

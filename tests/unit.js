@@ -445,6 +445,30 @@ test("défi Paroles : questions « Complétez les paroles », propositions avec 
   eq(g2.recordId, "lyrics-pop");
   eq(new Game({ cat: pop, tracks: fakeTracks(2) }).recordId, "pop");
 });
+test("défis surprise dans une partie normale : nombre fixe, paroles prêtes utilisées, records à part", () => {
+  setRandom(seeded(4));
+  const tracks = fakeTracks(10);
+  tracks[2].lyric = { answer: "été", decoys: ["nuit", "ville", "sourire"], line: "x ____" };
+  tracks[5].lyric = { answer: "soir", decoys: ["nuit", "ville", "matin"], line: "y ____" };
+  const g = new Game({ cat: pop, tracks, mix: "some", lyricTracks: [tracks[2], tracks[5]] });
+  const l = new Game({ cat: pop, tracks: fakeTracks(10), mix: "lots" });
+  const off = new Game({ cat: pop, tracks, mix: "off", lyricTracks: [tracks[2]] });
+  const ch = new Game({ cat: pop, tracks: fakeTracks(10), challenge: "helium", mix: "lots" });
+  setRandom(null);
+  eq(g.rounds.filter((r) => r.mixed).length, 3);
+  eq(g.rounds.filter((r) => r.kind === "lyrics").length, 1, "au plus un tiers des défis en paroles");
+  ok(g.rounds.filter((r) => r.kind === "lyrics").every((r) => r.mixed && [2, 5].includes(g.rounds.indexOf(r)) && r.choices.length === 4));
+  ok(g.rounds.every((r) => r.mixed === (r.kind === "lyrics" || SURPRISE_EFFECTS.includes(r.effect))));
+  ok(g.rounds.filter((r) => !r.mixed).every((r) => !r.effect && r.kind !== "lyrics"));
+  eq(l.rounds.filter((r) => r.mixed && r.effect).length, 6, "sans paroles : que des effets");
+  ok(off.rounds.every((r) => !r.mixed && !r.effect && r.kind !== "lyrics"), "désactivé : partie normale");
+  ok(ch.rounds.every((r) => r.effect === "helium" && !r.mixed), "un défi choisi ignore le mix");
+  eq(g.recordId, "pop+some");
+  eq(l.recordId, "pop+lots");
+  eq(off.recordId, "pop");
+  eq(ch.recordId, "helium-pop");
+  eq(new Game({ cat: pop, tracks: fakeTracks(2), mix: "some" }).rounds.filter((r) => r.mixed).length, 1, "au moins un défi");
+});
 test("défi surprise : un effet par manche, jamais deux fois le même d'affilée", () => {
   setRandom(seeded(9));
   const g = new Game({ cat: pop, tracks: fakeTracks(20), challenge: "surprise" });
