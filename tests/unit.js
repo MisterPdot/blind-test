@@ -5,6 +5,9 @@ import { Game, makeChoices, isTypedCorrect, scoreFor, answerOf } from "../js/gam
 import { CATEGORIES, categoryById } from "../js/categories.js";
 import { submitRecord, getRecord } from "../js/storage.js";
 import { PICKS } from "../js/picks.js";
+import { makeLyricQuestion, cleanLine, attachLyrics, decoysFor } from "../js/lyrics.js";
+import { shapeSignal, renderSignal, encodeWav, prepareEffect, RATE } from "../js/effects.js";
+import { CHALLENGES, SURPRISE_EFFECTS } from "../js/challenges.js";
 
 const results = [];
 function test(name, fn) { results.push({ name, fn }); }
@@ -347,6 +350,168 @@ test("toutes les catégories sont valides", () => {
     }
   }
   ok(CATEGORIES.length >= 20);
+});
+
+
+// ───── défis : paroles
+const SONG = `[Couplet 1]
+Je marche seul dans la ville endormie
+Les lumières dansent au fond de ma nuit
+Et je repense à ton joli sourire
+[Refrain]
+Oh viens danser sous la pluie d'été
+Toute la nuit on va chanter
+Oh viens danser sous la pluie d'été
+Toute la nuit on va chanter (encore)
+Je garde en moi ce parfum de liberté
+Oh viens danser sous la pluie d'été`;
+test("paroles : ligne du refrain, dernier mot plein caché, leurres crédibles", () => {
+  setRandom(seeded(3));
+  const q = makeLyricQuestion(SONG);
+  setRandom(null);
+  ok(q, "question fabriquée");
+  eq(q.full, "Oh viens danser sous la pluie d'été", "le refrain (ligne la plus répétée)");
+  eq(q.answer, "été");
+  ok(q.line.includes("____") && !q.line.includes("été"), q.line);
+  eq(q.line, "Oh viens danser sous la pluie d'____");
+  eq(q.decoys.length, 3);
+  ok(q.decoys.every((d) => fold(d) !== "ete" && !d.includes("'")), q.decoys.join());
+  eq(cleanLine("  [Refrain] Toute la nuit (encore)  "), "Toute la nuit");
+  eq(makeLyricQuestion(""), null);
+  eq(makeLyricQuestion("Hey\nHo"), null);
+  eq(decoysFor({ answer: "Soleil", decoys: [] }).length, 3);
+});
+test("paroles : recherche exacte puis élargie, morceaux sans paroles écartés", async () => {
+  localStorage.removeItem("bt-lyrics-v1");
+  const tracks = [1, 2, 3, 4].map((i) => ({ id: 900 + i, title: `Titre ${i}`, artist: "Groupe", fullArtist: "Groupe" }));
+  const f = fakeFetch(() => null);
+  const fn = async (url) => {
+    f.calls.push(url);
+    const u = new URL(url);
+    const t = u.searchParams.get("track_name");
+    if (u.pathname.endsWith("/get")) {
+      if (t === "Titre 1") return { ok: true, status: 200, json: async () => ({ plainLyrics: SONG, instrumental: false }) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
+    if (t === "Titre 2") return { ok: true, status: 200, json: async () => ([{ artistName: "Groupe", plainLyrics: SONG }]) };
+    if (t === "Titre 3") return { ok: true, status: 200, json: async () => ([{ artistName: "Autre", plainLyrics: SONG }]) };
+    return { ok: true, status: 200, json: async () => ([]) };
+  };
+  const ready = await attachLyrics(tracks, 10, { fetchFn: fn });
+  eq(ready.map((t) => t.id), [901, 902]);
+  ok(ready.every((t) => t.lyric && t.lyric.decoys.length === 3));
+  ok(f.calls.every((c) => c.startsWith("https://lrclib.net/api/")), "base LRCLIB");
+  const n = f.calls.length;
+  await attachLyrics(tracks.map((t) => ({ ...t })), 10, { fetchFn: fn });
+  eq(f.calls.length, n, "2e fois : paroles gardées en cache");
+  localStorage.removeItem("bt-lyrics-v1");
+});
+test("paroles : refus LRCLIB (429) → attente puis nouvel essai, jamais gardé comme « sans paroles »", async () => {
+  localStorage.removeItem("bt-lyrics-v1");
+  const waits = [];
+  let n = 0;
+  const fn = async () => {
+    n++;
+    if (n <= 2) return { ok: false, status: 429, headers: { get: () => "1" }, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ plainLyrics: SONG }) };
+  };
+  const ready = await attachLyrics([{ id: 1, title: "A", artist: "B" }], 1, { fetchFn: fn, wait: async (ms) => waits.push(ms) });
+  eq(ready.length, 1);
+  eq(waits, [1000, 1000]);
+  localStorage.removeItem("bt-lyrics-v1");
+  const down = async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({}) });
+  const none = await attachLyrics([{ id: 2, title: "A", artist: "B" }], 1, { fetchFn: down, wait: async () => {} });
+  eq(none.length, 0);
+  ok(!(JSON.parse(localStorage.getItem("bt-lyrics-v1") || "{}"))[2], "le refus n'est pas mis en cache");
+});
+test("paroles : pas de ligne répétitive ni de petits mots en leurres", () => {
+  const txt = ["Ah les cro cro cro les cro cro cro", "Mais avec toi tout est comme avant", "Je cherche encore la lumière du matin",
+    "Je cherche encore la lumière du matin", "Personne ne voit le chemin de traverse", "Nous irons danser sur la montagne",
+    "Le soleil brille sur la rivière", "La ville dort sous un ciel orange"].join("\n");
+  for (let i = 0; i < 10; i++) {
+    const q = makeLyricQuestion(txt);
+    eq(q.full, "Je cherche encore la lumière du matin");
+    eq(q.answer, "matin");
+    ok(q.decoys.every((d) => !["mais", "avec", "tout", "comme", "cro"].includes(fold(d))), q.decoys.join());
+  }
+});
+test("défi Paroles : questions « Complétez les paroles », propositions avec la bonne réponse", () => {
+  const tracks = fakeTracks(3).map((t) => ({ ...t, lyric: { answer: "été", decoys: ["nuit", "ville", "sourire"], line: "x ____" } }));
+  const g = new Game({ cat: pop, tracks, challenge: "lyrics" });
+  ok(g.rounds.every((r) => r.kind === "lyrics" && r.prompt === "Complétez les paroles" && r.choices.includes("été") && r.choices.length === 4));
+  ok(g.answer("été", 0).correct, "bonne proposition");
+  const g2 = new Game({ cat: pop, tracks, challenge: "lyrics", answerMode: "typing" });
+  ok(g2.answer("ete", 1).correct, "réponse tapée : accent oublié toléré");
+  eq(g2.recordId, "lyrics-pop");
+  eq(new Game({ cat: pop, tracks: fakeTracks(2) }).recordId, "pop");
+});
+test("défi surprise : un effet par manche, jamais deux fois le même d'affilée", () => {
+  setRandom(seeded(9));
+  const g = new Game({ cat: pop, tracks: fakeTracks(20), challenge: "surprise" });
+  setRandom(null);
+  ok(g.rounds.every((r) => SURPRISE_EFFECTS.includes(r.effect)));
+  ok(g.rounds.every((r, i) => i === 0 || r.effect !== g.rounds[i - 1].effect));
+  ok(new Set(g.rounds.map((r) => r.effect)).size >= 4, "variété");
+  const h = new Game({ cat: pop, tracks: fakeTracks(3), challenge: "helium" });
+  ok(h.rounds.every((r) => r.effect === "helium" && r.kind !== "lyrics"));
+  eq(CHALLENGES.length, 9);
+});
+
+// ───── défis : effets sonores
+function fakeBuffer(L, R, sampleRate = 8000) {
+  return { sampleRate, length: L.length, numberOfChannels: R ? 2 : 1, getChannelData: (c) => (c === 0 ? L : R) };
+}
+test("effets : karaoké (gauche − droite), repli si enregistrement mono, envers, puzzle", () => {
+  const n = 8000 * 10;
+  const voice = Float32Array.from({ length: n }, (_, i) => Math.sin(i / 5));
+  const guitar = Float32Array.from({ length: n }, (_, i) => Math.sin(i / 13));
+  const L = voice.map((v, i) => v + guitar[i]);
+  const R = voice.map((v, i) => v - guitar[i]);
+  const k = shapeSignal(fakeBuffer(L, R), "karaoke");
+  eq(k.effect, "karaoke");
+  ok(Math.abs(k.data[1234] - 0.9 * 2 * guitar[1234]) < 1e-5, "la voix (au centre) disparaît");
+  eq(shapeSignal(fakeBuffer(L, L), "karaoke").effect, "underwater", "mono : on passe sous l'eau");
+  const ramp = Float32Array.from({ length: n }, (_, i) => i / n);
+  const rev = shapeSignal(fakeBuffer(ramp), "reverse").data;
+  ok(rev[0] > 0.99 && rev[n - 1] < 0.01, "à l'envers");
+  setRandom(seeded(4));
+  const pz = shapeSignal(fakeBuffer(ramp), "puzzle", Math.random).data;
+  setRandom(null);
+  eq(pz.length, n);
+  const firsts = [0, 1, 2, 3, 4].map((c) => Math.round(pz[c * 16000 + 8000] * 10));
+  ok(firsts.some((v, i) => v !== 2 * i + 1), `morceaux mélangés : ${firsts}`);
+});
+test("effets : hélium plus court, ralenti plus long, WAV valide", async () => {
+  const n = 8000 * 4;
+  const data = Float32Array.from({ length: n }, (_, i) => 0.5 * Math.sin(i / 3));
+  const h = await renderSignal(data, 8000, "helium");
+  const sl = await renderSignal(data, 8000, "slow");
+  const no = await renderSignal(data, 8000, "underwater");
+  ok(Math.abs(h.duration - 4 / 1.45) < 0.05, `hélium ${h.duration}`);
+  ok(Math.abs(sl.duration - 4 / 0.7) < 0.05, `ralenti ${sl.duration}`);
+  ok(Math.abs(no.duration - 4) < 0.05);
+  eq(h.sampleRate, RATE);
+  const wav = new DataView(encodeWav(h.getChannelData(0), RATE));
+  eq(String.fromCharCode(wav.getUint8(0), wav.getUint8(1), wav.getUint8(2), wav.getUint8(3)), "RIFF");
+  eq(wav.getUint32(24, true), RATE);
+  eq(wav.byteLength, 44 + h.length * 2);
+});
+test("effets : de l'extrait au fichier jouable (téléchargement, décodage, rendu)", async () => {
+  const sr = 16000;
+  const src = Float32Array.from({ length: sr * 3 }, (_, i) => 0.4 * Math.sin(i / 4));
+  const wav = encodeWav(src, sr);
+  const calls = [];
+  const fetchFn = async (u) => { calls.push(u); return { ok: true, status: 200, arrayBuffer: async () => wav.slice(0) }; };
+  const a = await prepareEffect("https://x.test/a.wav", "slow", { fetchFn });
+  ok(a.url.startsWith("blob:"), a.url);
+  ok(Math.abs(a.duration - 3 / 0.7) < 0.1, `durée ${a.duration}`);
+  await prepareEffect("https://x.test/a.wav", "slow", { fetchFn });
+  eq(calls.length, 1, "même extrait + même effet : préparé une seule fois");
+  const k = await prepareEffect("https://x.test/a.wav", "karaoke", { fetchFn });
+  eq(k.effect, "underwater", "extrait mono : karaoké impossible, repli");
+  let err = null;
+  try { await prepareEffect("https://x.test/b.wav", "helium", { fetchFn: async () => ({ ok: false, status: 404 }) }); } catch (x) { err = x; }
+  ok(err, "extrait introuvable : erreur (le jeu rejoue l'original)");
 });
 
 // ───── records

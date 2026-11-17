@@ -1,7 +1,10 @@
 // Interface du blind test : écrans d'accueil, réglages, manches, révélation, résultats.
 import { GROUPS, CATEGORIES, categoryById } from "./categories.js";
 import { buildPlaylist } from "./music.js";
-import { Game, HARD_CLIP } from "./game.js";
+import { Game, HARD_CLIP, answerOf } from "./game.js";
+import { CHALLENGES, NO_LYRICS, challengeById } from "./challenges.js";
+import { EFFECTS, prepareEffect, clearEffects } from "./effects.js";
+import { attachLyrics } from "./lyrics.js";
 import { escapeHtml as e } from "./util.js";
 import * as audio from "./audio.js";
 import { loadSettings, saveSettings, getRecord, submitRecord } from "./storage.js";
@@ -47,11 +50,15 @@ function isStandalone() { return window.navigator.standalone === true || matchMe
 function renderHome() {
   stopRound();
   audio.stopAudio();
+  clearEffects();
   game = null;
   let installHint = false;
   try { installHint = isIos() && !isStandalone() && !localStorage.getItem("bt-hint-closed"); } catch { /* */ }
 
-  const tiles = CATEGORIES.filter((c) => c.group === tab).map((c) => {
+  const tiles = tab === "defis" ? CHALLENGES.map((c) => `<button class="tile" data-challenge="${c.id}" style="--g:${grad(c)}">
+        <span class="tile-emoji">${c.emoji}</span>
+        <span class="tile-name">${e(c.name)}</span>
+      </button>`).join("") : CATEGORIES.filter((c) => c.group === tab).map((c) => {
     const rec = settings.audience === "solo" ? getRecord(c.id, settings.rounds, settings.level) : null;
     return `<button class="tile" data-cat="${c.id}" style="--g:${grad(c)}">
         <span class="tile-emoji">${c.emoji}</span>
@@ -74,12 +81,15 @@ function renderHome() {
     </div>
     <nav class="tabs" role="tablist" aria-label="Catégories">
       ${GROUPS.map((g) => `<button role="tab" data-tab="${g.id}" class="${tab === g.id ? "on" : ""}">${g.label}</button>`).join("")}
+      <button role="tab" data-tab="defis" class="${tab === "defis" ? "on" : ""}">Défis 🎭</button>
     </nav>
+    ${tab === "defis" ? `<p class="tab-intro">Des façons de jouer pour pimenter la partie, avec la musique de votre choix.</p>` : ""}
     <div class="grid">${tiles}</div>
     <footer class="foot">Extraits de 30 s fournis par Apple&nbsp;Music · Internet nécessaire pour jouer</footer>
   `, "home");
 
   $$("[data-cat]").forEach((b) => b.addEventListener("click", () => openSetup(categoryById(b.dataset.cat))));
+  $$("[data-challenge]").forEach((b) => b.addEventListener("click", () => openSetup(null, challengeById(b.dataset.challenge))));
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; renderHome(); }));
   $$("[data-audience]").forEach((b) => b.addEventListener("click", () => {
     settings.audience = b.dataset.audience; save(); renderHome();
@@ -101,7 +111,25 @@ function field(label, control, help = "") {
   return `<div class="field"><label>${label}</label>${control}${help ? `<p class="help">${help}</p>` : ""}</div>`;
 }
 
-function sheetBody(cat) {
+// Catégorie de musique d'un défi (gardée dans les réglages).
+function challengeCat(ch) {
+  let c = categoryById(settings.challengeCat) || categoryById("mix");
+  if (ch.id === "lyrics" && NO_LYRICS.has(c.id)) c = categoryById("mix");
+  return c;
+}
+
+function musicField(ch) {
+  const cur = challengeCat(ch).id;
+  const opts = GROUPS.map((g) => `<optgroup label="${e(g.label)}">${CATEGORIES
+    .filter((c) => c.group === g.id && !(ch.id === "lyrics" && NO_LYRICS.has(c.id)))
+    .map((c) => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${c.emoji} ${e(c.name)}</option>`).join("")}</optgroup>`).join("");
+  return field("Musique", `<select id="challenge-cat" class="select" aria-label="Musique">${opts}</select>`,
+    ch.id === "lyrics" ? "Les paroles viennent de la base libre LRCLIB : les morceaux sans paroles sont passés." : "");
+}
+
+function sheetBody(cat, ch = null) {
+  if (ch) cat = challengeCat(ch);
+  const recId = ch ? `${ch.id}-${cat.id}` : cat.id;
   const friends = settings.audience === "friends";
   const times = [[10, "10 s"], [20, "20 s"], [30, "30 s"]];
   const answers = [["choices", "4 propositions"], ["typing", "Je tape"]];
@@ -109,9 +137,10 @@ function sheetBody(cat) {
     settings.level === "hard"
       ? `L'extrait s'arrête après ${HARD_CLIP} secondes, mais le chrono continue.${settings.audience === "friends" && settings.friendsMode === "party" ? "" : " Points ×1,5."}`
       : "On entend l'extrait pendant tout le temps de réponse.");
+  const music = ch ? musicField(ch) : "";
   if (!friends) {
-    const rec = getRecord(cat.id, settings.rounds, settings.level);
-    return field("Nombre de morceaux", seg("rounds", settings.rounds, [[10, "10"], [15, "15"], [20, "20"]]))
+    const rec = getRecord(recId, settings.rounds, settings.level);
+    return music + field("Nombre de morceaux", seg("rounds", settings.rounds, [[10, "10"], [15, "15"], [20, "20"]]))
       + field("Temps pour répondre", seg("duration", settings.duration, times))
       + level
       + field("Réponses", seg("answerMode", settings.answerMode, answers),
@@ -126,7 +155,7 @@ function sheetBody(cat) {
              autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Nom du joueur ${i + 1}">
       ${settings.players.length > 1 ? `<button class="icon-btn" data-remove="${i}" aria-label="Retirer">✕</button>` : ""}
     </div>`).join("");
-  return field("Mode", seg("friendsMode", settings.friendsMode, [["turns", "Chacun son tour"], ["party", "Soirée"]]),
+  return music + field("Mode", seg("friendsMode", settings.friendsMode, [["turns", "Chacun son tour"], ["party", "Soirée"]]),
       party ? "Une personne tient le téléphone : tout le monde écoute, le premier qui crie la bonne réponse marque un point."
             : "Chacun répond à son tour : on se passe le téléphone.")
     + field("Joueurs", `<div class="players">${players}</div>
@@ -139,22 +168,24 @@ function sheetBody(cat) {
     + (party ? "" : field("Réponses", seg("answerMode", settings.answerMode, answers)));
 }
 
-function openSetup(cat) {
+function openSetup(cat, ch = null) {
+  const head = ch || cat;
   sheetRoot.innerHTML = `
     <div class="backdrop" data-close></div>
-    <div class="sheet" role="dialog" aria-modal="true" aria-label="${e(cat.name)}">
+    <div class="sheet" role="dialog" aria-modal="true" aria-label="${e(head.name)}">
       <div class="grabber"></div>
-      <div class="sheet-head" style="--g:${grad(cat)}">
-        <span class="tile-emoji">${cat.emoji}</span>
-        <div><h2>${e(cat.name)}</h2><p>${settings.audience === "friends" ? "Entre amis" : "Solo"}</p></div>
+      <div class="sheet-head" style="--g:${grad(head)}">
+        <span class="tile-emoji">${head.emoji}</span>
+        <div><h2>${e(head.name)}</h2><p>${settings.audience === "friends" ? "Entre amis" : "Solo"}</p></div>
         <button class="icon-btn" data-close aria-label="Fermer">✕</button>
       </div>
-      <div class="sheet-body" id="sheet-body">${sheetBody(cat)}</div>
+      ${ch ? `<p class="sheet-desc">${e(ch.desc)}</p>` : ""}
+      <div class="sheet-body" id="sheet-body">${sheetBody(cat, ch)}</div>
       <button class="cta" id="play">▶&nbsp; Jouer</button>
     </div>`;
   requestAnimationFrame(() => sheetRoot.classList.add("open"));
   const body = $("#sheet-body", sheetRoot);
-  const refresh = () => { body.innerHTML = sheetBody(cat); };
+  const refresh = () => { body.innerHTML = sheetBody(cat, ch); };
 
   sheetRoot.onclick = (ev) => {
     const t = ev.target;
@@ -175,7 +206,12 @@ function openSetup(cat) {
       if (last) { last.focus(); last.select(); }
       return;
     }
-    if (t.closest("#play")) return play(cat);
+    if (t.closest("#play")) return play(ch ? challengeCat(ch) : cat, ch);
+  };
+  sheetRoot.onchange = (ev) => {
+    if (ev.target.id !== "challenge-cat") return;
+    settings.challengeCat = ev.target.value;
+    save(); refresh();
   };
   sheetRoot.oninput = (ev) => {
     const inp = ev.target.closest(".player-name");
@@ -192,7 +228,7 @@ function closeSheet() {
   setTimeout(() => { if (!sheetRoot.classList.contains("open")) sheetRoot.innerHTML = ""; }, 300);
 }
 
-function play(cat) {
+function play(cat, ch = null) {
   if (settings.audience === "friends") {
     settings.players = settings.players.map((n, i) => n.trim() || `Joueur ${i + 1}`);
     if (settings.friendsMode === "turns" && settings.players.length < 2) {
@@ -203,11 +239,13 @@ function play(cat) {
   }
   audio.unlockAudio(); // pendant le toucher : indispensable sur iPhone
   closeSheet();
-  startGame(cat);
+  startGame(cat, ch);
 }
 
 // ═════════════════════════ Préparation ═════════════════════════
-async function startGame(cat) {
+async function startGame(cat, ch = null) {
+  if (typeof ch === "string") ch = challengeById(ch);
+  clearEffects();
   const mode = settings.audience === "solo" ? "solo" : settings.friendsMode;
   const players = mode === "solo" ? [{ name: "Moi" }] : settings.players.map((n) => ({ name: n }));
   const count = mode === "turns" ? settings.perPlayer * players.length : settings.rounds;
@@ -216,15 +254,28 @@ async function startGame(cat) {
   show(`
     <div class="loading" style="--g:${grad(cat)}">
       <div class="disc spinning big"><div class="disc-label"><span>${cat.emoji}</span></div></div>
-      <h2>On prépare la playlist…</h2>
-      <p class="muted">${e(cat.name)} · ${count} morceaux</p>
+      <h2 id="load-title">On prépare la playlist…</h2>
+      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.name)} · ${count} morceaux</p>
       <button class="ghost" id="cancel">Annuler</button>
     </div>`, "center");
   $("#cancel").addEventListener("click", () => { loadToken++; renderHome(); });
 
   try {
-    let { tracks, extra } = await buildPlaylist(cat, count);
+    let { tracks, extra } = await buildPlaylist(cat, ch && ch.id === "lyrics" ? count + 12 : count);
     if (token !== loadToken) return;
+    if (ch && ch.id === "lyrics") {
+      const all = tracks.concat(extra);
+      const title = $("#load-title");
+      if (title) title.textContent = "On cherche les paroles…";
+      const ready = await attachLyrics(all, count, {
+        isCancelled: () => token !== loadToken,
+        onProgress: (n) => { const t = $("#load-title"); if (t) t.textContent = `On cherche les paroles… ${n}/${count}`; },
+      });
+      if (token !== loadToken) return;
+      if (ready.length < Math.min(count, 3)) throw Object.assign(new Error(), { code: "nolyrics" });
+      tracks = ready;
+      extra = all.filter((t) => !ready.includes(t));
+    }
     if (mode === "turns") {
       const fair = Math.floor(tracks.length / players.length) * players.length;
       if (fair < players.length) throw Object.assign(new Error(), { code: "empty" });
@@ -232,30 +283,52 @@ async function startGame(cat) {
       tracks = tracks.slice(0, fair);
     }
     if (tracks.length < count) toast(`Seulement ${tracks.length} extraits trouvés pour ce thème.`);
-    game = new Game({ cat, mode, players, duration: settings.duration, answerMode: settings.answerMode, level: settings.level, tracks, extra });
+    game = new Game({ cat, mode, players, duration: settings.duration, answerMode: settings.answerMode, level: settings.level,
+      challenge: ch && ch.id, tracks, extra });
+    if (game.rounds[0].effect) {
+      // Premier extrait transformé à l'avance (les suivants pendant la partie).
+      const title = $("#load-title");
+      if (title) title.textContent = "On transforme les extraits…";
+      await Promise.race([prepareRound(game.rounds[0]), new Promise((ok) => setTimeout(ok, 12000))]);
+      if (token !== loadToken) return;
+      if (game.rounds[1]) prepareRound(game.rounds[1]);
+    }
     showIntro();
   } catch (err) {
     if (token !== loadToken) return;
-    renderError(err, cat);
+    renderError(err, cat, ch);
   }
 }
 
-function renderError(err, cat) {
+/** Prépare l'extrait transformé d'une manche (r.fx = { url, effect } ou null si impossible). */
+function prepareRound(r) {
+  if (!r.effect) return Promise.resolve(null);
+  if (!r.fxJob) {
+    r.fxJob = prepareEffect(r.track.preview, r.effect).then(
+      (fx) => { r.fx = fx; return fx; },
+      () => { r.fx = null; r.fxFailed = true; return null; });
+  }
+  return r.fxJob;
+}
+
+function renderError(err, cat, ch = null) {
   const code = err && err.code;
   const msg = code === "busy"
     ? "Beaucoup de parties lancées d'affilée : le service musical demande une petite pause. Réessayez dans une minute."
     : code === "empty"
       ? "Pas assez d'extraits trouvés pour ce thème. Essayez-en un autre !"
+      : code === "nolyrics"
+        ? "Pas assez de paroles trouvées pour cette musique. Essayez une autre catégorie (par exemple Pop française ou Années 80) !"
       : "Impossible de joindre le service musical. Vérifiez votre connexion Internet.";
   show(`
     <div class="error-card">
-      <div class="huge">${code === "busy" ? "⏳" : code === "empty" ? "🤷" : "📡"}</div>
+      <div class="huge">${code === "busy" ? "⏳" : code === "empty" || code === "nolyrics" ? "🤷" : "📡"}</div>
       <h2>Oups…</h2>
       <p>${msg}</p>
       <button class="cta" id="retry">Réessayer</button>
       <button class="ghost" id="home">Retour à l'accueil</button>
     </div>`, "center");
-  $("#retry").addEventListener("click", () => { audio.unlockAudio(); startGame(cat); });
+  $("#retry").addEventListener("click", () => { audio.unlockAudio(); startGame(cat, ch); });
   $("#home").addEventListener("click", renderHome);
 }
 
@@ -304,8 +377,9 @@ function showIntro() {
        <p class="muted">Manche ${game.index + 1} / ${game.rounds.length}</p>
        <h2>Au tour de <span class="hl">${e(p.name)}</span></h2>
        <p class="muted">Passe-lui le téléphone 📱</p>`
-    : `<div class="huge">${game.cat.emoji}</div>
-       <h2>${e(game.cat.name)}</h2>
+    : `<div class="huge">${game.challenge ? game.challenge.emoji : game.cat.emoji}</div>
+       <h2>${e(game.challenge ? game.challenge.name : game.cat.name)}</h2>
+       ${game.challenge ? `<p class="muted">${e(game.cat.emoji)} ${e(game.cat.name)}</p><p class="small">${e(game.challenge.desc)}</p>` : ""}
        <p class="muted">${game.rounds.length} morceaux · ${game.duration} s pour répondre</p>
        ${game.level === "hard" ? `<p class="hard-badge">🔥 Difficile : extraits de ${HARD_CLIP} s</p>` : ""}
        ${game.mode === "party"
@@ -335,13 +409,26 @@ function answersHtml(r) {
     <button class="cta" id="reveal-btn">Révéler la réponse</button>`;
 }
 
+function lyricCard(r, done = false) {
+  const q = r.track.lyric;
+  const line = done
+    ? e(q.line).replace("____", `<mark>${e(q.answer)}</mark>`)
+    : e(q.line).replace("____", `<span class="blank">${"_".repeat(Math.max(4, Math.min(10, q.answer.length)))}</span>`);
+  return `<div class="lyric-card" id="lyric-card">
+      <p class="lyric-song">🎵 ${e(r.track.title)} — ${e(r.track.artist)}</p>
+      ${q.before ? `<p class="lyric-before">${e(q.before)}</p>` : ""}
+      <p class="lyric-line">${line}</p>
+    </div>`;
+}
+
 function beginRound() {
   const r = game.current;
   stopRound();
   round = { started: false, start: 0, raf: 0, done: false, blocked: false, fallback: 0, cut: false };
   const p = game.currentPlayer;
   show(`${topbar()}
-    <div class="stage" style="--g:${grad(game.cat)}">
+    <div class="stage${r.kind === "lyrics" ? " compact" : ""}" style="--g:${grad(game.cat)}">
+      ${r.effect ? `<div class="fx-badge" id="fx-badge">${EFFECTS[r.effect].emoji} ${e(EFFECTS[r.effect].label)}</div>` : ""}
       <div class="disc-wrap" id="disc-wrap">
         <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="ring-bg" cx="60" cy="60" r="56"/>
@@ -353,6 +440,7 @@ function beginRound() {
       ${eq(9).replace("eq", "eq wide")}
       <p class="round-num">Manche ${game.index + 1} / ${game.rounds.length}${game.mode === "turns" ? ` · <span class="dot" style="--c:${p.color}"></span>${e(p.name)}` : ""}</p>
       <h2 class="prompt">${e(r.prompt)}</h2>
+      ${r.kind === "lyrics" ? lyricCard(r) : ""}
     </div>
     <div class="answers" id="answers">${answersHtml(r)}</div>
     <div class="tap-play" id="tap-play" hidden><button class="cta">▶&nbsp; Touchez pour écouter</button></div>`, "round");
@@ -374,17 +462,39 @@ function beginRound() {
     audio.resume().then((ok) => { if (ok) { tap.hidden = true; round.blocked = false; startTimer(); } });
   });
 
-  audio.playTrack(r.track.preview, {
-    onPlaying: startTimer,
-    onError: () => onAudioError(),
-  }).then((ok) => {
-    if (!ok) { round.blocked = true; tap.hidden = false; }
-  });
-  // Réseau lent : on démarre le chrono quand même au bout de 3 s.
-  round.fallback = setTimeout(() => { if (!round.blocked) startTimer(); }, 3000);
+  const start = (src) => {
+    audio.playTrack(src, {
+      onPlaying: startTimer,
+      onError: () => onAudioError(),
+    }).then((ok) => {
+      if (!ok) { round.blocked = true; tap.hidden = false; }
+    });
+    // Réseau lent : on démarre le chrono quand même au bout de 3 s.
+    round.fallback = setTimeout(() => { if (!round.blocked) startTimer(); }, 3000);
+  };
+  if (r.effect) {
+    const myRound = round;
+    const go = () => {
+      if (myRound !== round || round.done) return;
+      if (r.fx) {
+        if (r.fx.effect !== r.effect) {
+          const b = $("#fx-badge");
+          if (b) b.textContent = `${EFFECTS[r.fx.effect].emoji} ${EFFECTS[r.fx.effect].label}`;
+        }
+        start(r.fx.url);
+      } else {
+        const b = $("#fx-badge");
+        if (b) b.textContent = "Effet indisponible : extrait normal";
+        start(r.track.preview);
+      }
+    };
+    if (r.fx || r.fxFailed) go(); else prepareRound(r).then(go);
+  } else {
+    start(r.track.preview);
+  }
 
   const nxt = game.rounds[game.index + 1];
-  if (nxt) audio.preload(nxt.track.preview);
+  if (nxt) { if (nxt.effect) prepareRound(nxt); else audio.preload(nxt.track.preview); }
 }
 
 function startTimer() {
@@ -465,8 +575,7 @@ function submit(value, button = null, timeout = false) {
 
 function isRight(choice) {
   const r = game.current;
-  const ans = r.kind === "title" ? r.track.title : r.kind === "artist" ? r.track.artist : r.track.work;
-  return choice === ans;
+  return choice === answerOf(r.track, r.kind);
 }
 
 function partyReveal() {
@@ -489,8 +598,13 @@ function reveal(res) {
   if (wrap) wrap.classList.add("revealed");
   const over = $(".clip-over");
   if (over) over.remove();
-  // Mode difficile : on fait entendre la suite de l'extrait pendant la réponse.
-  if (round.cut && !res.skipped) audio.resume();
+  // Défi à effet : on fait entendre la version originale. Mode difficile : la suite de l'extrait.
+  const fxPlayed = r.effect && r.fx && !res.skipped;
+  if (fxPlayed) audio.playTrack(t.preview);
+  else if (round.cut && !res.skipped) audio.resume();
+  const badge = $("#fx-badge");
+  if (badge && fxPlayed) badge.textContent = "🎧 Version originale";
+  if (r.kind === "lyrics") { const card = $("#lyric-card"); if (card) card.outerHTML = lyricCard(r, true); }
 
   let verdict;
   if (res.skipped) verdict = `<div class="verdict warn">⚠️ Extrait indisponible : manche annulée</div>`;
@@ -503,7 +617,8 @@ function reveal(res) {
   else verdict = `<div class="verdict ko">✗ Raté…${game.answerMode === "typing" ? ` <span class="said">« ${e(res.value)} »</span>` : ""}</div>`;
 
   const meta = [t.work && r.kind !== "work" ? t.work : "", t.year || ""].filter(Boolean).join(" · ");
-  const answerLine = r.kind === "work" ? `<p class="work-line">${e(t.work)}</p>` : "";
+  const answerLine = r.kind === "work" ? `<p class="work-line">${e(t.work)}</p>`
+    : r.kind === "lyrics" ? `<p class="work-line">« ${e(t.lyric.answer)} »</p>` : "";
   const partyBlock = res.party ? `
     <p class="who">Qui a trouvé ?</p>
     <div class="winners">${game.players.map((p, i) =>
@@ -546,6 +661,7 @@ function renderResults() {
   audio.stopAudio();
   recapPlaying = -1;
   const cat = game.cat;
+  const ch = game.challenge;
   const ranking = game.ranking();
   const n = game.rounds.length;
   let head;
@@ -553,13 +669,13 @@ function renderResults() {
 
   if (game.mode === "solo") {
     const p = game.players[0];
-    const prev = getRecord(cat.id, n, game.level);
-    const isRecord = n === settings.rounds && submitRecord(cat.id, n, p.score, game.level);
+    const prev = getRecord(game.recordId, n, game.level);
+    const isRecord = n === settings.rounds && submitRecord(game.recordId, n, p.score, game.level);
     celebrate = isRecord;
     const pct = p.good / n;
     const mood = pct >= 0.9 ? "Incroyable ! 🤩" : pct >= 0.7 ? "Bravo ! 🎉" : pct >= 0.4 ? "Pas mal ! 👍" : "On s'entraîne encore ? 💪";
     head = `
-      <p class="muted">${e(cat.emoji)} ${e(cat.name)}</p>
+      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}</p>
       <h2 class="mood">${mood}</h2>
       <div class="big-score"><span id="final-score">${p.score}</span><small>points</small></div>
       ${isRecord ? `<div class="badge-record">🏆 Nouveau record !</div>` : prev ? `<p class="muted small">Record : ${prev.score} pts</p>` : ""}
@@ -572,7 +688,7 @@ function renderResults() {
     const top = ranking[0];
     const tie = ranking.length > 1 && ranking[1].score === top.score && ranking[1].good === top.good;
     head = `
-      <p class="muted">${e(cat.emoji)} ${e(cat.name)}</p>
+      <p class="muted">${ch ? `${ch.emoji} ${e(ch.name)} · ` : ""}${e(cat.emoji)} ${e(cat.name)}</p>
       <h2 class="mood">${tie ? "Égalité ! 🤝" : `${e(top.name)} gagne ! 👑`}</h2>
       <ol class="podium">${ranking.map((p, i) => `
         <li class="rank r${i + 1}" style="--c:${p.color}">
@@ -600,7 +716,7 @@ function renderResults() {
   }).join("");
 
   show(`
-    <div class="results" style="--g:${grad(cat)}">
+    <div class="results" style="--g:${grad(ch || cat)}">
       ${head}
       <div class="actions">
         <button class="cta" id="again">🔁 Rejouer</button>
@@ -610,7 +726,7 @@ function renderResults() {
       <ul class="recap">${recap}</ul>
     </div>`, "results-screen");
 
-  $("#again").addEventListener("click", () => { audio.unlockAudio(); startGame(cat); });
+  $("#again").addEventListener("click", () => { audio.unlockAudio(); startGame(cat, ch); });
   $("#home").addEventListener("click", renderHome);
   $$("[data-play]").forEach((b) => b.addEventListener("click", () => toggleRecap(Number(b.dataset.play))));
   if (celebrate) confetti();

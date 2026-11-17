@@ -1,6 +1,7 @@
 // Règles du jeu : choix de la question, propositions, correction, points. Aucune dépendance au DOM.
 import { fold, shuffle, levenshtein, random } from "./util.js";
 import { promptFor } from "./categories.js";
+import { challengeById, SURPRISE_EFFECTS } from "./challenges.js";
 
 /** Mode difficile : l'extrait s'arrête après ce nombre de secondes, et les points sont multipliés. */
 export const HARD_CLIP = 5;
@@ -12,6 +13,7 @@ export function answerOf(track, kind) {
   if (kind === "title") return track.title;
   if (kind === "artist") return track.artist;
   if (kind === "work") return track.work;
+  if (kind === "lyrics") return track.lyric ? track.lyric.answer : "";
   return "";
 }
 
@@ -25,6 +27,7 @@ export function chooseKind(cat, track) {
 /** Quatre propositions (la bonne + trois crédibles), dans un ordre aléatoire. */
 export function makeChoices(track, kind, pool, cat) {
   const correct = answerOf(track, kind);
+  if (kind === "lyrics") return shuffle([correct, ...track.lyric.decoys.slice(0, 3)]);
   const key = fold(correct);
   const cands = new Map();
   const add = (v) => {
@@ -69,6 +72,7 @@ export function isTypedCorrect(input, answers) {
 export function acceptedAnswers(track, kind) {
   if (kind === "artist") return [track.artist, track.fullArtist];
   if (kind === "title") return [track.title];
+  if (kind === "lyrics") return [track.lyric.answer];
   return [track.work];
 }
 
@@ -86,8 +90,9 @@ export class Game {
    * mode : "solo" | "turns" (chacun son tour, on se passe le téléphone) | "party" (un animateur attribue les points)
    * answerMode : "choices" | "typing"
    */
-  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", level = "normal", tracks, extra = [] }) {
+  constructor({ cat, mode = "solo", players = [{ name: "Moi" }], duration = 20, answerMode = "choices", level = "normal", challenge = null, tracks, extra = [] }) {
     this.cat = cat;
+    this.challenge = challengeById(challenge);
     this.level = level === "hard" ? "hard" : "normal";
     this.mode = mode;
     this.duration = duration;
@@ -96,11 +101,19 @@ export class Game {
       name: p.name, color: p.color || PLAYER_COLORS[i % PLAYER_COLORS.length], score: 0, streak: 0, bestStreak: 0, good: 0,
     }));
     const pool = tracks.concat(extra);
+    const ch = this.challenge;
+    let lastFx = null;
     this.rounds = tracks.map((track, i) => {
-      const kind = chooseKind(cat, track);
+      const kind = ch && ch.id === "lyrics" ? "lyrics" : chooseKind(cat, track);
+      let effect = ch ? ch.effect || null : null;
+      if (ch && ch.surprise) {
+        const opts = SURPRISE_EFFECTS.filter((x) => x !== lastFx);
+        effect = opts[Math.floor(random() * opts.length)];
+      }
+      lastFx = effect;
       return {
-        track, kind,
-        prompt: promptFor(cat, kind),
+        track, kind, effect,
+        prompt: kind === "lyrics" ? "Complétez les paroles" : promptFor(cat, kind),
         choices: this.answerMode === "choices" ? makeChoices(track, kind, pool, cat) : null,
         player: mode === "turns" ? i % this.players.length : 0,
         result: null,
@@ -108,6 +121,9 @@ export class Game {
     });
     this.index = 0;
   }
+
+  /** Identifiant des records : catégorie seule, ou défi + catégorie. */
+  get recordId() { return this.challenge ? `${this.challenge.id}-${this.cat.id}` : this.cat.id; }
 
   get current() { return this.rounds[this.index]; }
   get currentPlayer() { return this.players[this.current.player]; }

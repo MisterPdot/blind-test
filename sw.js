@@ -1,8 +1,8 @@
 // Garde l'application en cache pour un démarrage instantané (les extraits, eux, viennent d'Internet).
-const VERSION = "bt-v4";
+const VERSION = "bt-v5";
 const SHELL = [
   "./", "index.html", "css/style.css", "manifest.webmanifest",
-  "js/app.js", "js/audio.js", "js/categories.js", "js/game.js", "js/music.js", "js/picks.js", "js/storage.js", "js/util.js",
+  "js/app.js", "js/audio.js", "js/categories.js", "js/challenges.js", "js/effects.js", "js/lyrics.js", "js/game.js", "js/music.js", "js/picks.js", "js/storage.js", "js/util.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
 ];
 

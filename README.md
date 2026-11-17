@@ -19,6 +19,12 @@ avec son icône, comme une app de l'App Store, sans Mac, sans App Store et gratu
   - *Soirée* : un animateur tient le téléphone, tout le monde écoute, et le premier qui crie la bonne réponse marque le point.
 - **Mode difficile** : l'extrait s'arrête après 5 secondes, mais le chrono continue. Les points sont multipliés par 1,5, et les records
   sont comptés à part.
+- **Défis** (onglet « Défis 🎭 »), avec la musique de son choix :
+  - 🎤 *Paroles manquantes* : une ligne de la chanson s'affiche avec un mot en moins. Les paroles viennent de la base
+    libre [LRCLIB](https://lrclib.net).
+  - 🎙️ *Karaoké* (voix retirée), 🎈 *Hélium*, 🐢 *Au ralenti*, ⏪ *À l'envers*, 🌊 *Sous l'eau*, 📻 *Vieille radio*,
+    🧩 *Puzzle* (extrait découpé et mélangé), 🎲 *Défis surprise* (un effet différent à chaque morceau).
+  - Les effets sont fabriqués sur le téléphone à partir de l'extrait d'Apple. Après la réponse, on entend la version originale.
 - **Réponses** : 4 propositions, ou réponse tapée. La réponse tapée tolère les fautes, les accents oubliés et les « The / Le / La ».
 - **Récapitulatif** en fin de partie : on peut réécouter chaque extrait ou l'ouvrir dans Apple Music.
 
@@ -59,8 +65,10 @@ Ensuite, dans **Safari**, touchez **Partager ⬆︎**, puis **« Sur l'écran d'
   - `js/game.js` : les règles, les propositions, la correction des réponses tapées et les points.
   - `js/app.js` : l'interface.
   - `js/audio.js` : le son, avec le déblocage audio d'iOS.
+  - `js/challenges.js`, `js/effects.js`, `js/lyrics.js` : les défis, les effets sonores et les paroles.
   - `js/storage.js` : les réglages et les records.
-- **Tests** : `.venv\Scripts\python -m pytest tests`. Ils comprennent les tests de logique et 14 parties complètes jouées
+- **Tests** : `.venv\Scripts\python -m pytest tests`. Ils comprennent les tests de logique et 17 parties complètes jouées
   automatiquement dans un iPhone simulé, avec des extraits factices.
 - **Vérification réelle avec l'identité d'un iPhone** : `python tests/live_iphone.py https://misterpdot.github.io/blind-test/`.
+- **Vérification réelle des défis** (vrais extraits, vraies paroles) : `python tests/live_defis.py`.
 - **Vérification réelle du catalogue Apple** : `python tests/live_check.py`. Elle prend environ 15 minutes à cause de la limite d'Apple.

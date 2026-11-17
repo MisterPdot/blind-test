@@ -11,6 +11,7 @@ export const DEFAULTS = {
   answerMode: "choices",  // "choices" | "typing"
   level: "normal",        // "normal" | "hard" (extrait coupé après quelques secondes)
   players: ["Joueur 1", "Joueur 2"],
+  challengeCat: "mix",     // musique des défis
 };
 
 function read(key) {

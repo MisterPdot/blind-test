@@ -29,6 +29,14 @@ def _wav(seconds=8.0, rate=8000):
 
 
 WAV = _wav()
+LYRICS = """Je marche seul dans la ville endormie
+Les lumières dansent au fond de ma nuit
+Et je repense à ton joli sourire
+Oh viens danser avec moi {t} ce soir
+Toute la nuit on va chanter
+Oh viens danser avec moi {t} ce soir
+Toute la nuit on va chanter
+Je garde en moi ce parfum de liberté"""
 PNG = (ROOT / "icons" / "icon-512.png").read_bytes()
 
 
@@ -77,8 +85,24 @@ def _new_page(browser, base_url, api="ok", audio_ok=True):
                       body=json.dumps({"resultCount": len(results), "results": results}))
 
     ctx.route("https://itunes.apple.com/**", itunes)
-    ctx.route("https://audio.test/**", lambda r: r.fulfill(status=200, content_type="audio/wav", body=WAV)
+    ctx.route("https://audio.test/**", lambda r: r.fulfill(status=200, content_type="audio/wav", body=WAV,
+                                                          headers={"Access-Control-Allow-Origin": "*"})
               if audio_ok else r.fulfill(status=404, body=""))
+
+    def lrclib(route):
+        calls.append(route.request.url)
+        q = parse_qs(urlparse(route.request.url).query)
+        title = q["track_name"][0]
+        if "/api/get" in route.request.url:
+            if title.startswith(("Minuit", "Feu")):  # quelques morceaux sans paroles
+                return route.fulfill(status=404, headers={"Access-Control-Allow-Origin": "*"}, body="{}")
+            body = {"plainLyrics": LYRICS.format(t=title), "instrumental": False}
+        else:
+            body = []
+        route.fulfill(status=200, content_type="application/json", headers={"Access-Control-Allow-Origin": "*"},
+                      body=json.dumps(body))
+
+    ctx.route("https://lrclib.net/**", lrclib)
     ctx.route("https://art.test/**", lambda r: r.fulfill(status=200, content_type="image/png", body=PNG))
     page.goto(base_url + "/")
     page.wait_for_selector(".tile")
@@ -95,7 +119,12 @@ def _no_problems(page):
 
 def _correct(page):
     return page.evaluate("""(() => { const r = BT.game.current;
-        return r.kind === 'title' ? r.track.title : r.kind === 'artist' ? r.track.artist : r.track.work; })()""")
+        return r.kind === 'title' ? r.track.title : r.kind === 'artist' ? r.track.artist
+             : r.kind === 'lyrics' ? r.track.lyric.answer : r.track.work; })()""")
+
+
+def _player(page):
+    return page.evaluate("import('/js/audio.js').then(m => ({paused: m.getPlayer().paused, src: m.getPlayer().src}))")
 
 
 def _audio_playing(page):
@@ -123,6 +152,10 @@ def test_accueil_et_categories(browser, base_url):
     assert page.locator(".tile").count() == 9
     page.click("[data-tab=themes]")
     assert page.locator(".tile").count() == 10
+    page.click("[data-tab=defis]")
+    assert page.locator(".tile").count() == 9
+    page.screenshot(path=str(SHOTS / "17-defis.png"))
+    page.click("[data-tab=genres]")
     page.screenshot(path=str(SHOTS / "02-themes.png"))
     # l'invite « installer sur l'iPhone » s'affiche (Safari iOS simulé) et se ferme
     assert page.locator("#install-hint").is_visible()
@@ -156,6 +189,106 @@ def test_themes_selection_series_et_80s(browser, base_url):
         page.wait_for_selector(".tile")
     lookups = [c for c in page.api_calls if "/lookup?" in c]
     assert len(lookups) == 2 and len(page.api_calls) == 2, page.api_calls
+    _no_problems(page)
+    ctx.close()
+
+
+def _open_challenge(page, ch, music):
+    page.click("[data-tab=defis]")
+    page.click(f".tile[data-challenge='{ch}']")
+    page.wait_for_selector("#sheet-root.open .sheet")
+    page.wait_for_timeout(350)
+    page.select_option("#challenge-cat", music)
+    page.wait_for_timeout(100)
+
+
+def test_defi_helium_puis_version_originale(browser, base_url):
+    ctx, page = _new_page(browser, base_url)
+    _open_challenge(page, "helium", "pop")
+    assert "écureuil" in page.inner_text(".sheet-desc")
+    page.screenshot(path=str(SHOTS / "18-reglages-defi.png"))
+    page.click("#play")
+    page.wait_for_selector("#go", timeout=15000)
+    assert "Hélium" in page.inner_text(".intro-card") and "Pop" in page.inner_text(".intro-card")
+    page.click("#go")
+    page.wait_for_selector(".choice")
+    assert "Hélium" in page.inner_text("#fx-badge")
+    page.wait_for_function("document.querySelector('#time').textContent !== '20'", timeout=6000)
+    pl = _player(page)
+    assert not pl["paused"] and pl["src"].startswith("blob:"), pl  # extrait transformé sur le téléphone
+    page.screenshot(path=str(SHOTS / "19-helium.png"))
+    page.locator(".choice", has_text=_correct(page)).first.click()
+    page.wait_for_selector(".verdict.ok")
+    page.wait_for_timeout(400)
+    pl = _player(page)
+    assert "audio.test" in pl["src"] and not pl["paused"], pl  # puis la version originale
+    assert "originale" in page.inner_text("#fx-badge")
+    page.click("#next")
+    page.wait_for_selector(".choice")
+    page.wait_for_function("document.querySelector('#time') && document.querySelector('#time').textContent !== '20'", timeout=6000)
+    assert _player(page)["src"].startswith("blob:")
+    assert page.evaluate("BT.settings.challengeCat") == "pop"
+    _no_problems(page)
+    ctx.close()
+
+
+def test_defi_karaoke_mono_et_surprise(browser, base_url):
+    ctx, page = _new_page(browser, base_url)
+    _open_challenge(page, "karaoke", "rock")
+    page.click("#play")
+    page.wait_for_selector("#go", timeout=15000)
+    page.click("#go")
+    page.wait_for_selector(".choice")
+    # extrait de test mono : impossible de retirer la voix, le jeu le signale et applique un autre effet
+    page.wait_for_function("document.querySelector('#fx-badge').textContent.includes('Sous l')", timeout=8000)
+    page.click("#quit"); page.click("#confirm-quit")
+    _open_challenge(page, "surprise", "80s")
+    _set(page, "duration", "10")
+    page.click("#play")
+    page.wait_for_selector("#go", timeout=15000)
+    page.click("#go")
+    seen = set()
+    for i in range(4):
+        page.wait_for_selector(".choice")
+        page.wait_for_function("document.querySelector('#time') && document.querySelector('#time').textContent !== '10'", timeout=8000)
+        seen.add(page.inner_text("#fx-badge"))
+        page.locator(".choice", has_text=_correct(page)).first.click()
+        page.wait_for_selector("#next")
+        page.click("#next")
+    assert len(seen) >= 2, seen
+    _no_problems(page)
+    ctx.close()
+
+
+def test_defi_paroles_manquantes(browser, base_url):
+    ctx, page = _new_page(browser, base_url)
+    _open_challenge(page, "lyrics", "popfr")
+    # les catégories instrumentales ne sont pas proposées pour ce défi
+    opts = page.eval_on_selector_all("#challenge-cat option", "els => els.map(e => e.value)")
+    assert "classique" not in opts and "films" not in opts and "popfr" in opts
+    page.click("#play")
+    page.wait_for_selector("#go", timeout=20000)
+    page.click("#go")
+    for i in range(10):
+        page.wait_for_selector(".choice")
+        assert page.inner_text(".prompt") == "Complétez les paroles"
+        assert page.locator(".lyric-card .blank").count() == 1
+        if i == 0:
+            page.screenshot(path=str(SHOTS / "20-paroles.png"))
+        good = _correct(page)
+        assert good in page.locator(".choice").all_inner_texts()
+        page.locator(".choice", has_text=good).first.click()
+        page.wait_for_selector(".verdict.ok")
+        assert page.inner_text(".lyric-card mark") == good
+        if i == 0:
+            page.screenshot(path=str(SHOTS / "21-paroles-reponse.png"))
+        page.click("#next")
+    page.wait_for_selector(".big-score")
+    assert "10/10" in page.inner_text(".stats")
+    # morceaux sans paroles écartés
+    titles = page.locator(".recap-text b").all_inner_texts()
+    assert not any(t.startswith(("Minuit", "Feu")) for t in titles), titles
+    assert page.evaluate("BT.game.recordId") == "lyrics-popfr"
     _no_problems(page)
     ctx.close()
 
