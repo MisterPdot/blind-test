@@ -1,4 +1,4 @@
-# Blind Test 🎵
+# Blind Mike Test 🎵
 
 Un jeu de blind test pour iPhone : on écoute un extrait de 30 s et on devine le **titre**, l'**artiste**
 ou le **film**, en solo ou entre amis.

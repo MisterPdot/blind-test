@@ -1,4 +1,4 @@
-/* ═════════════ Blind Test : thème sombre « soirée » ═════════════ */
+/* ═════════════ Blind Mike Test : thème sombre « soirée » ═════════════ */
 :root {
   --bg: #0d0820;
   --bg2: #1a1036;
@@ -94,9 +94,9 @@ h1, h2, h3, p { margin: 0; }
 /* ═════════════ Accueil ═════════════ */
 .hero { text-align: center; padding: 18px 0 18px; }
 .logo { display: inline-flex; align-items: center; gap: 12px; }
-.logo h1 { font-size: 2.6rem; font-weight: 900; letter-spacing: -0.03em; }
+.logo h1 { font-size: clamp(1.8rem, 8.6vw, 2.6rem); white-space: nowrap; font-weight: 900; letter-spacing: -0.03em; }
 .logo h1 span {
-  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; margin-left: 4px;
+  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .tagline { color: var(--muted); margin-top: 4px; letter-spacing: 0.18em; text-transform: uppercase; font-size: 0.75rem; font-weight: 600; }
 

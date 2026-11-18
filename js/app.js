@@ -69,7 +69,7 @@ function renderHome() {
 
   show(`
     <header class="hero">
-      <div class="logo">${eq(5)}<h1>Blind<span>Test</span></h1></div>
+      <div class="logo">${eq(5)}<h1>Blind <span>Mike</span> Test</h1></div>
       <p class="tagline">Écoute. Devine. Gagne.</p>
     </header>
     ${installHint ? `<div class="hint" id="install-hint">
